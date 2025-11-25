@@ -1,0 +1,14 @@
+image: node:18
+
+stages:
+  - deploy
+
+deploy-backend:
+  stage: deploy
+  before_script:
+    - npm install -g @railway/cli
+  script:
+    - cd server
+    - railway up --service=backend
+  only:
+    - main

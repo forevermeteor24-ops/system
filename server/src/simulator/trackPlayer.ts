@@ -1,5 +1,9 @@
 import { WebSocketServer } from "ws";
 
+/**
+ * ⭐ 最稳定、无跳动、支持刷新恢复、支持多客户端同时连接的版本
+ * ⭐ 已完全按方案 A 修复（仅推送给订阅当前 orderId 的客户端）
+ */
 export class TrackPlayer {
   private orderId: string;
   private wss: WebSocketServer;
@@ -7,80 +11,108 @@ export class TrackPlayer {
   private points: { lng: number; lat: number }[] = [];
   private index = 0;
 
-  private playing = false;
+  private isPlaying = false;
   private stopped = false;
 
-  private speed = 1200; // Cloudflare/Ngrok 建议 >= 1000ms
+  /** 
+   * ⭐ 速度减到 900ms
+   */
+  private speed = 900;
 
   constructor(orderId: string, wss: WebSocketServer) {
     this.orderId = orderId;
     this.wss = wss;
   }
 
-  /** ❗ 新增：给新客户端同步当前进度 */
+  /** ⭐ 当前播放状态（给刷新时恢复用） */
   getCurrentState() {
-    const p =
-      this.points[this.index] || this.points[this.points.length - 1] || null;
+    if (!this.points.length) {
+      return {
+        index: 0,
+        total: 0,
+        position: null,
+        playing: false,
+      };
+    }
+
+    const safeIndex = Math.min(this.index, this.points.length - 1);
 
     return {
-      index: this.index,
+      index: safeIndex,
       total: this.points.length,
-      position: p,
+      position: this.points[safeIndex],
+      playing: this.isPlaying && !this.stopped,
     };
   }
 
-  /** ===========================
-   *   启动轨迹推送（不会重置 index）
-   *  =========================== */
+  /** ============================
+   *    启动播放（不会重复）
+   * ============================ */
   startWithPoints(points: { lng: number; lat: number }[]) {
     if (!points || points.length === 0) {
-      console.error(`❌ TrackPlayer(${this.orderId}) 启动失败：points 为空`);
+      console.error(`❌ TrackPlayer(${this.orderId}) 启动失败：空 points`);
       return;
     }
 
-    this.points = points;
+    /** ⭐ 正在播就拒绝重复 start */
+    if (this.isPlaying && !this.stopped) {
+      console.log(`⚠ TrackPlayer(${this.orderId}) 已在播放，忽略重复 start`);
+      return;
+    }
 
-    // ❗ 注意：不重置 index（关键逻辑）
-    this.playing = true;
+    /** ⭐ 刷新恢复越界修复 */
+    if (this.index >= points.length) {
+      this.index = points.length - 1;
+    }
+
+    this.points = points;
     this.stopped = false;
+    this.isPlaying = true;
 
     console.log(
-      `🚚 TrackPlayer(${this.orderId}) continue from index ${this.index}/${points.length}`
+      `🚚 TrackPlayer(${this.orderId}) start @ index ${this.index}/${points.length}`
     );
 
     this.nextTick();
   }
 
-  /** ===========================
-   *   推送下一帧（单步）
-   *  =========================== */
-  private nextTick(): void {
-    if (this.stopped || !this.playing) return;
+  /** ============================
+   *       推送下一帧
+   * ============================ */
+  private nextTick() {
+    if (this.stopped || !this.isPlaying) return;
+    if (!this.points.length) return;
 
+    // ⭐ 到终点
     if (this.index >= this.points.length) {
-      this.stopped = true;
+      const final = this.points[this.points.length - 1];
+
       this.broadcast({
-        type: "route-finished",
+        type: "location",
         orderId: this.orderId,
+        finished: true,
+        index: this.points.length - 1,
+        total: this.points.length,
+        position: final,
       });
-      console.log(`✔ TrackPlayer(${this.orderId}) finished`);
+
+      console.log(`✔ TrackPlayer(${this.orderId}) 到达终点`);
+
+      this.isPlaying = false;
+      this.stopped = true;
       return;
     }
 
+    /** ⭐ 正常推送位置 */
     const p = this.points[this.index];
-
-    if (!p || isNaN(p.lng) || isNaN(p.lat)) {
-      console.warn(`⚠ 跳过无效坐标 index=${this.index}`, p);
-      this.index++;
-      return void this.nextTick();
-    }
 
     this.broadcast({
       type: "location",
       orderId: this.orderId,
       index: this.index,
       total: this.points.length,
-      position: { lng: p.lng, lat: p.lat },
+      position: p,
+      finished: false,
     });
 
     this.index++;
@@ -89,8 +121,9 @@ export class TrackPlayer {
   }
 
   pause() {
-    if (this.stopped || !this.playing) return;
-    this.playing = false;
+    if (!this.isPlaying || this.stopped) return;
+
+    this.isPlaying = false;
 
     this.broadcast({
       type: "route-paused",
@@ -98,13 +131,13 @@ export class TrackPlayer {
       index: this.index,
     });
 
-    console.log(`⏸ TrackPlayer(${this.orderId}) paused at ${this.index}`);
+    console.log(`⏸ TrackPlayer(${this.orderId}) paused`);
   }
 
   resume() {
-    if (this.stopped || this.playing) return;
+    if (this.stopped || this.isPlaying) return;
 
-    this.playing = true;
+    this.isPlaying = true;
 
     this.broadcast({
       type: "route-resumed",
@@ -118,8 +151,9 @@ export class TrackPlayer {
 
   stop() {
     if (this.stopped) return;
+
     this.stopped = true;
-    this.playing = false;
+    this.isPlaying = false;
 
     this.broadcast({
       type: "route-stopped",
@@ -129,16 +163,18 @@ export class TrackPlayer {
     console.log(`■ TrackPlayer(${this.orderId}) stopped`);
   }
 
+  /** ===================================================
+   *  ⭐ 修复重点：仅发送给订阅了当前 orderId 的客户端
+   * =================================================== */
   private broadcast(msg: any) {
-    const str = JSON.stringify(msg);
+    const data = JSON.stringify(msg);
 
     this.wss.clients.forEach((client: any) => {
-      try {
-        if (client.readyState === 1) {
-          client.send(str);
-        }
-      } catch (err) {
-        console.error("WS send error:", err);
+      if (
+        client.readyState === 1 &&
+        client.subscribedOrderId === this.orderId // ←⭐ 关键判断（方案 A 核心）
+      ) {
+        client.send(data);
       }
     });
   }

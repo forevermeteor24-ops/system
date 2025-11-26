@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 export async function connectDB() {
-  const url = process.env.MONGO_URI;
+  const url = process.env.MONGO_URI as string;
 
   if (!url) {
     console.error("❌ MONGO_URI is missing. Check environment variables!");

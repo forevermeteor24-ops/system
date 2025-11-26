@@ -22,7 +22,7 @@ async function main() {
   const server = http.createServer(app);
   setupWS(server); // 启动 WebSocket 服务
 
-  const PORT = 3000;
+  const PORT = 8080;
   server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });

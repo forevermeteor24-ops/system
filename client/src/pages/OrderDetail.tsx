@@ -121,7 +121,7 @@ export default function OrderDetail() {
     if (!routeLoaded) return;
     if (!routePoints || routePoints.length === 0) return;
 
-    const ws = new WebSocket("wss://patches-pope-paris-promised.trycloudflare.com");
+    const ws = new WebSocket("wss://system-backend.zeabur.app");
     wsRef.current = ws;
 
     ws.onopen = () => {

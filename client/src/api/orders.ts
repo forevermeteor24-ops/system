@@ -8,7 +8,7 @@ export interface Order {
 }
 
 /** Cloudflare Tunnel 后端地址 */
-const BASE = "https://screenshots-targets-universal-cells.trycloudflare.com/api/orders";
+const BASE = "https://patches-pope-paris-promised.trycloudflare.com/api/orders";
 
 /** 获取全部订单 */
 export async function fetchOrders(): Promise<Order[]> {

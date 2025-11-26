@@ -1,9 +1,15 @@
 import mongoose from "mongoose";
 
 export async function connectDB() {
-  const url = process.env.MONGO_URL || "mongodb://127.0.0.1:27017/logistics";
+  const url = process.env.MONGO_URI;
+
+  if (!url) {
+    console.error("❌ MONGO_URI is missing. Check environment variables!");
+    process.exit(1);
+  }
+
   try {
-    await mongoose.connect(url);
+    await mongoose.connect(url as string);
     console.log("✅ MongoDB connected");
   } catch (err) {
     console.error("❌ MongoDB connect error:", err);

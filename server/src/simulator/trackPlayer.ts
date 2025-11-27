@@ -1,9 +1,7 @@
+// server/src/simulator/trackPlayer.ts
 import { WebSocketServer } from "ws";
+import TrackState from "../models/TrackState";
 
-/**
- * ⭐ 最稳定、无跳动、支持刷新恢复、支持多客户端同时连接的版本
- * ⭐ 已完全按方案 A 修复（仅推送给订阅当前 orderId 的客户端）
- */
 export class TrackPlayer {
   private orderId: string;
   private wss: WebSocketServer;
@@ -14,17 +12,41 @@ export class TrackPlayer {
   private isPlaying = false;
   private stopped = false;
 
-  /** 
-   * ⭐ 速度减到 900ms
-   */
-  private speed = 900;
+  private speed = 900; // 稳定速度
 
   constructor(orderId: string, wss: WebSocketServer) {
     this.orderId = orderId;
     this.wss = wss;
   }
 
-  /** ⭐ 当前播放状态（给刷新时恢复用） */
+  /** 从数据库恢复 index */
+  async restoreProgress(total: number) {
+    const doc = await TrackState.findOne({ orderId: this.orderId });
+
+    if (!doc) {
+      await TrackState.create({
+        orderId: this.orderId,
+        index: 0,
+        total,
+      });
+      this.index = 0;
+      return;
+    }
+
+    // index 不超过 total
+    this.index = Math.min(doc.index, total - 1);
+  }
+
+  /** 保存当前进度 */
+  async saveProgress() {
+    await TrackState.findOneAndUpdate(
+      { orderId: this.orderId },
+      { index: this.index, total: this.points.length },
+      { upsert: true }
+    );
+  }
+
+  /** 返回当前状态（前端刷新时使用） */
   getCurrentState() {
     if (!this.points.length) {
       return {
@@ -45,45 +67,36 @@ export class TrackPlayer {
     };
   }
 
-  /** ============================
-   *    启动播放（不会重复）
-   * ============================ */
-  startWithPoints(points: { lng: number; lat: number }[]) {
+  /** 启动轨迹 */
+  async startWithPoints(points: { lng: number; lat: number }[]) {
     if (!points || points.length === 0) {
-      console.error(`❌ TrackPlayer(${this.orderId}) 启动失败：空 points`);
+      console.error(`❌ TrackPlayer(${this.orderId}) empty points`);
       return;
     }
 
-    /** ⭐ 正在播就拒绝重复 start */
     if (this.isPlaying && !this.stopped) {
-      console.log(`⚠ TrackPlayer(${this.orderId}) 已在播放，忽略重复 start`);
+      console.log(`⚠ TrackPlayer(${this.orderId}) already running`);
       return;
-    }
-
-    /** ⭐ 刷新恢复越界修复 */
-    if (this.index >= points.length) {
-      this.index = points.length - 1;
     }
 
     this.points = points;
     this.stopped = false;
-    this.isPlaying = true;
 
-    console.log(
-      `🚚 TrackPlayer(${this.orderId}) start @ index ${this.index}/${points.length}`
-    );
+    // ⭐ 恢复进度
+    await this.restoreProgress(points.length);
+
+    this.isPlaying = true;
+    console.log(`🚚 TrackPlayer(${this.orderId}) start @ index=${this.index}`);
 
     this.nextTick();
   }
 
-  /** ============================
-   *       推送下一帧
-   * ============================ */
-  private nextTick() {
+  /** 每一帧 */
+  private async nextTick() {
     if (this.stopped || !this.isPlaying) return;
     if (!this.points.length) return;
 
-    // ⭐ 到终点
+    // 终点
     if (this.index >= this.points.length) {
       const final = this.points[this.points.length - 1];
 
@@ -96,14 +109,14 @@ export class TrackPlayer {
         position: final,
       });
 
-      console.log(`✔ TrackPlayer(${this.orderId}) 到达终点`);
+      console.log(`✔ TrackPlayer(${this.orderId}) finished`);
 
       this.isPlaying = false;
       this.stopped = true;
       return;
     }
 
-    /** ⭐ 正常推送位置 */
+    // 推送正常位置
     const p = this.points[this.index];
 
     this.broadcast({
@@ -115,6 +128,9 @@ export class TrackPlayer {
       finished: false,
     });
 
+    // ⭐ 保存进度
+    await this.saveProgress();
+
     this.index++;
 
     setTimeout(() => this.nextTick(), this.speed);
@@ -122,7 +138,6 @@ export class TrackPlayer {
 
   pause() {
     if (!this.isPlaying || this.stopped) return;
-
     this.isPlaying = false;
 
     this.broadcast({
@@ -130,8 +145,6 @@ export class TrackPlayer {
       orderId: this.orderId,
       index: this.index,
     });
-
-    console.log(`⏸ TrackPlayer(${this.orderId}) paused`);
   }
 
   resume() {
@@ -145,13 +158,10 @@ export class TrackPlayer {
       index: this.index,
     });
 
-    console.log(`▶ TrackPlayer(${this.orderId}) resumed`);
     this.nextTick();
   }
 
   stop() {
-    if (this.stopped) return;
-
     this.stopped = true;
     this.isPlaying = false;
 
@@ -159,23 +169,13 @@ export class TrackPlayer {
       type: "route-stopped",
       orderId: this.orderId,
     });
-
-    console.log(`■ TrackPlayer(${this.orderId}) stopped`);
   }
 
-  /** ===================================================
-   *  ⭐ 修复重点：仅发送给订阅了当前 orderId 的客户端
-   * =================================================== */
   private broadcast(msg: any) {
     const data = JSON.stringify(msg);
 
     this.wss.clients.forEach((client: any) => {
-      if (
-        client.readyState === 1 &&
-        client.subscribedOrderId === this.orderId // ←⭐ 关键判断（方案 A 核心）
-      ) {
-        client.send(data);
-      }
+      if (client.readyState === 1) client.send(data);
     });
   }
 }

@@ -10,8 +10,7 @@ import {
   getRoute,
 } from "../controllers/orderController";
 
-import { startTrack } from "../ws";  // ⭐ 使用统一的轨迹启动函数（重要！）
-import { getWss } from "../ws";
+import { startTrack } from "../ws";  // ⭐ 统一轨迹启动入口
 
 const router = Router();
 
@@ -22,9 +21,8 @@ router.post("/", createOrder);
 router.get("/", getOrders);
 
 /* --------------------------
-   获取路线（按订单）
+   按订单获取路线
 --------------------------- */
-// GET /api/orders/route?id=<orderId>
 router.get("/route", getRoute);
 
 /* --------------------------
@@ -65,24 +63,7 @@ router.patch("/:id/status", async (req, res) => {
     const order = await updateOrderStatus(req, res);
     if (!order) return;
 
-    const wss = getWss();
-
-    /* 广播订单状态更新 */
-    if (wss) {
-      wss.clients.forEach((client: any) => {
-        if (client.readyState === 1) {
-          client.send(
-            JSON.stringify({
-              type: "order-status-updated",
-              orderId: order._id,
-              status: order.status,
-            })
-          );
-        }
-      });
-    }
-
-    /* 如果发货 → 自动启动轨迹推送 */
+    /* ⭐如果发货 → 自动启动轨迹 */
     if (order.status === "shipped") {
       try {
         const shopAddr =
@@ -93,7 +74,7 @@ router.patch("/:id/status", async (req, res) => {
         const route = await planRoute(origin, dest);
         const points = parseRouteToPoints(route);
 
-        // ⭐ 使用统一入口，避免重复创建 TrackPlayer！
+        // ⭐ 使用统一入口 → startTrack
         startTrack(String(order._id), points);
 
       } catch (err) {

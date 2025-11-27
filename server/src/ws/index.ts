@@ -1,18 +1,5 @@
-// server/src/ws/index.ts
 import { WebSocketServer } from "ws";
 import { TrackPlayer } from "../simulator/trackPlayer";
-
-interface StartTrackMessage {
-  type: "start-track";
-  orderId: string;
-  points: { lng: number; lat: number }[];
-}
-
-interface ControlTrackMessage {
-  type: "track-control";
-  orderId: string;
-  action: "pause" | "resume" | "stop";
-}
 
 const players = new Map<string, TrackPlayer>();
 let wssGlobal: WebSocketServer | null = null;
@@ -28,53 +15,68 @@ export function setupWS(server: any) {
     ws.subscribedOrderId = null;
 
     ws.on("message", async (raw: any) => {
-      const msgStr = raw.toString();
-
       let msg: any;
       try {
-        msg = JSON.parse(msgStr);
+        msg = JSON.parse(raw.toString());
       } catch {
         return;
       }
 
-      // request-current
-      if (msg.type === "request-current") {
-        const { orderId } = msg;
+      // ---------------------------
+      // 订阅
+      // ---------------------------
+      if (msg.type === "subscribe") {
+        ws.subscribedOrderId = msg.orderId;
+        return;
+      }
 
-        const player = players.get(orderId);
+      // ---------------------------
+      // 请求当前状态
+      // ---------------------------
+      if (msg.type === "request-current") {
+        const player = players.get(msg.orderId);
+
         if (!player) {
-          ws.send(JSON.stringify({ type: "no-track", orderId }));
+          ws.send(JSON.stringify({ type: "no-track", orderId: msg.orderId }));
           return;
         }
 
-        const state = player.getCurrentState();
-        ws.send(JSON.stringify({ type: "current-state", orderId, ...state }));
+        ws.send(
+          JSON.stringify({
+            type: "current-state",
+            orderId: msg.orderId,
+            ...player.getCurrentState(),
+          })
+        );
         return;
       }
 
-      // start-track
+      // ---------------------------
+      // 启动轨迹
+      // ---------------------------
       if (msg.type === "start-track") {
-        const { orderId, points } = msg as StartTrackMessage;
+        let player = players.get(msg.orderId);
 
-        let player = players.get(orderId);
-        if (!player) {
-          player = new TrackPlayer(orderId, wss);
-          players.set(orderId, player);
+        if (!player && wssGlobal) {
+          player = new TrackPlayer(msg.orderId, wssGlobal);
+          players.set(msg.orderId, player);
         }
 
-        await player.startWithPoints(points);
+        await player?.startWithPoints(msg.points);
         return;
       }
 
+      // ---------------------------
       // 控制
+      // ---------------------------
       if (msg.type === "track-control") {
-        const { orderId, action } = msg as ControlTrackMessage;
-        const player = players.get(orderId);
+        const player = players.get(msg.orderId);
         if (!player) return;
 
-        if (action === "pause") player.pause();
-        if (action === "resume") player.resume();
-        if (action === "stop") player.stop();
+        if (msg.action === "pause") player.pause?.();
+        else if (msg.action === "resume") player.resume?.();
+        else if (msg.action === "stop") player.stop();
+
         return;
       }
     });
@@ -87,7 +89,7 @@ export function setupWS(server: any) {
   return wss;
 }
 
-export function startTrack(orderId: string, points: { lng: number; lat: number }[]) {
+export function startTrack(orderId: string, points: any[]) {
   if (!wssGlobal) return;
 
   let player = players.get(orderId);

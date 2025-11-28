@@ -6,10 +6,36 @@ export type OrderStatus =
   | "delivering"
   | "delivered";
 
+/** 地址结构 */
+const AddressSchema = new mongoose.Schema(
+  {
+    detail: { type: String, required: true },
+    lng: { type: Number },
+    lat: { type: Number },
+  },
+  { _id: false }
+);
+
 const OrderSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
-    address: { type: String, required: true },
+
+    /** ⭐地址从 String → 对象 */
+    address: { type: AddressSchema, required: true },
+
+    /** ⭐订单所属商家 */
+    merchantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+
+    /** ⭐下单用户 */
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
 
     status: {
       type: String,
@@ -17,12 +43,7 @@ const OrderSchema = new mongoose.Schema(
       default: "pending",
     },
 
-    location: {
-      lng: Number,
-      lat: Number,
-    },
-
-    /** ⭐新增：用于保存轨迹进度（重启后恢复） */
+    /** ⭐轨迹进度（重启恢复） */
     trackState: {
       index: { type: Number, default: 0 },
       total: { type: Number, default: 0 },

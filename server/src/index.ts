@@ -7,6 +7,8 @@ import http from "http";
 import orderRoutes from "./api/orderRoutes";
 import { setupWS } from "./ws";
 import { connectDB } from "./config/db";
+import authRoutes from "./api/authRoutes";
+import merchantRoutes from "./api/merchantRoutes";
 
 async function main() {
   await connectDB(); // 连接 MongoDB
@@ -17,6 +19,8 @@ async function main() {
 
   // 挂载 API
   app.use("/api/orders", orderRoutes);
+  app.use("/api/auth", authRoutes);
+  app.use("/api/merchants", merchantRoutes);
 
   // 创建 HTTP + WebSocket
   const server = http.createServer(app);

@@ -1,17 +1,52 @@
 import { Request, Response } from "express";
 import axios from "axios";
 import OrderModel from "../models/orderModel";
+import User from "../models/userModel";
 
 /**
- * 订单 CRUD
+ * 创建订单
+ * 订单 address 现在是对象结构：
+ * {
+ *   detail: string,
+ *   lng: number | null,
+ *   lat: number | null
+ * }
  */
-
 export async function createOrder(req: Request, res: Response) {
   try {
-    const { title, address } = req.body;
+    const { title, address, merchantId: bodyMerchantId, userId: bodyUserId } = req.body;
     if (!title || !address) return res.status(400).json({ error: "缺少 title 或 address" });
 
-    const order = await OrderModel.create({ title, address, status: "pending" });
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ error: "未登录" });
+
+    let merchantId: string | undefined;
+    let userId: string | undefined;
+
+    if (actor.role === "user") {
+      if (!bodyMerchantId) return res.status(400).json({ error: "用户下单必须提供 merchantId" });
+      merchantId = bodyMerchantId;
+      userId = actor.userId;
+    } else if (actor.role === "merchant") {
+      merchantId = actor.userId;
+      if (bodyUserId) userId = bodyUserId;
+    } else {
+      return res.status(403).json({ error: "无权限创建订单" });
+    }
+
+    /** ⭐ address 结构改为对象 */
+    const order = await OrderModel.create({
+      title,
+      address: {
+        detail: address,
+        lng: null,
+        lat: null,
+      },
+      status: "pending",
+      merchantId,
+      userId,
+    });
+
     return res.json(order);
   } catch (err: any) {
     console.error("createOrder error:", err);
@@ -19,9 +54,17 @@ export async function createOrder(req: Request, res: Response) {
   }
 }
 
+/** 获取订单列表 */
 export async function getOrders(req: Request, res: Response) {
   try {
-    const list = await OrderModel.find().sort({ createdAt: -1 });
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ error: "未登录" });
+
+    const filter: any = {};
+    if (actor.role === "merchant") filter.merchantId = actor.userId;
+    else if (actor.role === "user") filter.userId = actor.userId;
+
+    const list = await OrderModel.find(filter).sort({ createdAt: -1 });
     return res.json(list);
   } catch (err: any) {
     console.error("getOrders error:", err);
@@ -29,10 +72,23 @@ export async function getOrders(req: Request, res: Response) {
   }
 }
 
+/** 获取单个订单 */
 export async function getOrder(req: Request, res: Response) {
   try {
-    const order = await OrderModel.findById(req.params.id);
-    if (!order) return res.status(404).json({ error: "Order not found" });
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ error: "未登录" });
+
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ error: "缺少订单 id" });
+
+    let order;
+    if (actor.role === "merchant")
+      order = await OrderModel.findOne({ _id: id, merchantId: actor.userId });
+    else if (actor.role === "user")
+      order = await OrderModel.findOne({ _id: id, userId: actor.userId });
+    else order = await OrderModel.findById(id);
+
+    if (!order) return res.status(404).json({ error: "Order not found 或无权限" });
     return res.json(order);
   } catch (err: any) {
     console.error("getOrder error:", err);
@@ -40,136 +96,129 @@ export async function getOrder(req: Request, res: Response) {
   }
 }
 
-/**
- * 更新订单状态（返回 order 给 caller）
- * 注意：返回 null 表示已在函数内返回了 HTTP 错误
- */
+/** 更新订单状态（仅商家） */
 export async function updateOrderStatus(req: Request, res: Response) {
   try {
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ error: "未登录" });
+
     const { status } = req.body;
-    if (!status) {
-      res.status(400).json({ error: "缺少 status 字段" });
-      return null;
-    }
+    if (!status) return res.status(400).json({ error: "缺少 status 字段" });
 
-    const order = await OrderModel.findByIdAndUpdate(req.params.id, { status }, { new: true });
-    if (!order) {
-      res.status(404).json({ error: "Order not found" });
-      return null;
-    }
+    if (actor.role !== "merchant")
+      return res.status(403).json({ error: "只有商家可以更新订单状态" });
 
-    return order;
+    const order = await OrderModel.findOneAndUpdate(
+      { _id: req.params.id, merchantId: actor.userId },
+      { status },
+      { new: true }
+    );
+
+    if (!order) return res.status(404).json({ error: "Order not found 或无权限" });
+    return res.json(order);
   } catch (err: any) {
     console.error("updateOrderStatus error:", err);
-    res.status(500).json({ error: "更新订单状态失败" });
-    return null;
+    return res.status(500).json({ error: "更新订单状态失败" });
   }
 }
 
-/* ==========================================
-   高德相关工具：geocode, planRoute, parse
-   — 保证返回结构与前端期待一致：
-   { origin: {lng,lat}, dest: {...}, points: [{lng,lat}, ...] }
-   ========================================== */
+/* -----------------------
+    高德地图工具函数
+----------------------- */
 
 export async function geocodeAddress(address: string) {
   const key = process.env.AMAP_GEOCODING_KEY || process.env.AMAP_KEY;
-  if (!key) throw new Error("Missing AMAP_GEOCODING_KEY in env");
+  if (!key) throw new Error("Missing AMAP_GEOCODING_KEY");
 
-  const url = `https://restapi.amap.com/v3/geocode/geo?address=${encodeURIComponent(address)}&key=${key}&output=json`;
+  const url = `https://restapi.amap.com/v3/geocode/geo?address=${encodeURIComponent(
+    address
+  )}&key=${key}&output=json`;
 
   const r = await axios.get(url);
   const data = r.data;
 
-  // 打印以便调试（部署环境可删除）
-  console.log("geocodeAddress response:", JSON.stringify(data)?.slice(0, 500));
-
-  if (!data || data.status !== "1" || !data.geocodes || data.geocodes.length === 0) {
+  if (!data || data.status !== "1" || !data.geocodes?.length)
     throw new Error(data?.info || "地址解析失败");
-  }
 
-  const loc = data.geocodes[0].location; // "lng,lat"
-  const [lng, lat] = loc.split(",");
+  const [lng, lat] = data.geocodes[0].location.split(",");
   return { lng: Number(lng), lat: Number(lat) };
 }
 
-export async function planRoute(origin: { lng: number; lat: number }, destination: { lng: number; lat: number }) {
+export async function planRoute(origin: any, dest: any) {
   const key = process.env.AMAP_DIRECTION_KEY || process.env.AMAP_KEY;
-  if (!key) throw new Error("Missing AMAP_DIRECTION_KEY in env");
+  if (!key) throw new Error("Missing AMAP_DIRECTION_KEY");
 
-  const url = `https://restapi.amap.com/v3/direction/driving?origin=${origin.lng},${origin.lat}&destination=${destination.lng},${destination.lat}&extensions=all&key=${key}&output=json`;
+  const url = `https://restapi.amap.com/v3/direction/driving?origin=${origin.lng},${origin.lat}&destination=${dest.lng},${dest.lat}&extensions=all&key=${key}&output=json`;
 
   const r = await axios.get(url);
   const data = r.data;
 
-  console.log("planRoute response:", JSON.stringify(data)?.slice(0, 1000));
-
-  if (!data || data.status !== "1" || !data.route || !data.route.paths || data.route.paths.length === 0) {
+  if (!data || data.status !== "1" || !data.route?.paths?.length)
     throw new Error(data?.info || "路线规划失败");
-  }
 
-  // 返回整个 route 对象（后面解析）
   return data.route;
 }
 
 export function parseRouteToPoints(route: any) {
-  const points: { lng: number; lat: number }[] = [];
-  try {
-    if (!route || !route.paths || route.paths.length === 0) return points;
-
-    const steps = route.paths[0].steps || [];
-    for (const step of steps) {
-      if (!step.polyline) continue;
-      const coords = step.polyline.split(";");
-      for (const c of coords) {
-        const [lng, lat] = c.split(",");
-        points.push({ lng: Number(lng), lat: Number(lat) });
-      }
+  const pts: any[] = [];
+  const steps = route?.paths?.[0]?.steps ?? [];
+  for (const s of steps) {
+    if (!s.polyline) continue;
+    for (const seg of s.polyline.split(";")) {
+      const [lng, lat] = seg.split(",");
+      pts.push({ lng: Number(lng), lat: Number(lat) });
     }
-  } catch (err) {
-    console.error("parseRouteToPoints error:", err);
   }
-  return points;
+  return pts;
 }
 
 /**
- * GET /api/orders/route?id=<orderId>
- * 返回 { origin, dest, points }
+ * GET /api/orders/route?id=xxx
+ * 自动根据模型结构新适配：
+ * 商家地址 → merchant.address.detail
+ * 用户地址 → order.address.detail
  */
 export async function getRoute(req: Request, res: Response) {
   try {
-    // 支持 GET /route?id=<orderId> 或 GET /route?shopAddress=...&customerAddress=...
-    const orderId = (req.query.id as string) || undefined;
-    const shopAddressQ = (req.query.shopAddress as string) || undefined;
-    const customerAddressQ = (req.query.customerAddress as string) || undefined;
+    const orderId = req.query.id as string;
+    if (!orderId) return res.status(400).json({ error: "缺少订单 id" });
 
-    if (!orderId && !(shopAddressQ && customerAddressQ)) {
-      return res.status(400).json({ error: "缺少 id 或 (shopAddress & customerAddress)" });
-    }
+    const actor = req.user;
+    if (!actor) return res.status(401).json({ error: "未登录" });
 
-    // 如果提供 orderId，就按订单地址来规划
-    if (orderId) {
-      const order = await OrderModel.findById(orderId);
-      if (!order) return res.status(404).json({ error: "Order not found" });
+    const order = await OrderModel.findById(orderId);
+    if (!order) return res.status(404).json({ error: "Order not found" });
 
-      const shopAddr = process.env.SHOP_ADDRESS || "北京市海淀区中关村大街27号";
-      const origin = await geocodeAddress(shopAddr);
-      const dest = await geocodeAddress(order.address);
-      const route = await planRoute(origin, dest);
-      const points = parseRouteToPoints(route);
+    if (actor.role === "user" && String(order.userId) !== actor.userId)
+      return res.status(403).json({ error: "无权限" });
 
-      return res.json({ origin, dest, points });
-    }
+    if (actor.role === "merchant" && String(order.merchantId) !== actor.userId)
+      return res.status(403).json({ error: "无权限" });
 
-    // 否则使用传入的两个地址
-    const origin = await geocodeAddress(shopAddressQ!);
-    const dest = await geocodeAddress(customerAddressQ!);
+    const merchant = await User.findById(order.merchantId);
+    if (!merchant) return res.status(404).json({ error: "商家不存在" });
+
+    if (!merchant.address?.detail)
+      return res.status(400).json({ error: "商家未填写地址" });
+
+    const shopAddress = merchant.address.detail;
+    const customerAddress = order.address.detail; // ⭐ 地址结构改了这里必须改
+
+    const origin = await geocodeAddress(shopAddress);
+    const dest = await geocodeAddress(customerAddress);
+
     const route = await planRoute(origin, dest);
     const points = parseRouteToPoints(route);
 
-    return res.json({ origin, dest, points });
+    return res.json({
+      shopAddress,
+      customerAddress,
+      origin,
+      dest,
+      points,
+    });
   } catch (err: any) {
-    console.error("GET /api/orders/route error:", err);
-    return res.status(500).json({ error: err.message || "Route fetch failed" });
+    console.error("getRoute error:", err);
+    return res.status(500).json({ error: err.message || "路线规划失败" });
   }
 }

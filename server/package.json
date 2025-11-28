@@ -14,17 +14,21 @@
   "type": "commonjs",
   "dependencies": {
     "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.20.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/axios": "^0.9.36",
+    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/mongoose": "^5.11.96",
     "@types/node": "^24.10.1",
     "@types/ws": "^8.18.1",

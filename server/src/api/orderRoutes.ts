@@ -10,7 +10,7 @@ import {
   getRoute,
 } from "../controllers/orderController";
 
-import { startTrack } from "../ws";
+import { startTrack } from "../ws/index";
 import UserModel from "../models/userModel";
 import OrderModel from "../models/orderModel";
 import { auth } from "../middleware/authMiddleware";

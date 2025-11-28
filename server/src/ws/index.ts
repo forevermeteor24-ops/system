@@ -1,20 +1,32 @@
-import { WebSocketServer } from "ws";
+// server/src/ws/index.ts
+import * as ws from "ws";
 import { TrackPlayer } from "../simulator/trackPlayer";
 
+/**
+ * 使用兼容写法：不直接依赖某个命名导出（避免不同 ws 版本的 TS 导出差异）
+ * 在运行时使用 ws.Server，TS 层用 any 来避免声明问题。
+ */
+
+type WSAny = any; // 兼容各种 ws 类型声明
+const WebSocketServer: any = (ws as any).Server || (ws as any).WebSocketServer || (ws as any).default?.Server;
+
 const players = new Map<string, TrackPlayer>();
-let wssGlobal: WebSocketServer | null = null;
+let wssGlobal: WSAny | null = null;
 
 export function setupWS(server: any) {
+  // 创建 server（兼容各种导出）
   const wss = new WebSocketServer({ server });
   wssGlobal = wss;
 
   console.log("🛰 WebSocket 服务已启动");
 
-  wss.on("connection", (ws: any) => {
+  wss.on("connection", (wsConn: WSAny) => {
     console.log("🌐 WS 客户端已连接");
-    ws.subscribedOrderId = null;
 
-    ws.on("message", async (raw: any) => {
+    // 自定义字段，用于订阅某个订单
+    wsConn.subscribedOrderId = null;
+
+    wsConn.on("message", async (raw: any) => {
       let msg: any;
       try {
         msg = JSON.parse(raw.toString());
@@ -22,26 +34,22 @@ export function setupWS(server: any) {
         return;
       }
 
-      // ---------------------------
-      // 订阅
-      // ---------------------------
+      // 订阅订单
       if (msg.type === "subscribe") {
-        ws.subscribedOrderId = msg.orderId;
+        wsConn.subscribedOrderId = msg.orderId;
         return;
       }
 
-      // ---------------------------
       // 请求当前状态
-      // ---------------------------
       if (msg.type === "request-current") {
         const player = players.get(msg.orderId);
 
         if (!player) {
-          ws.send(JSON.stringify({ type: "no-track", orderId: msg.orderId }));
+          wsConn.send(JSON.stringify({ type: "no-track", orderId: msg.orderId }));
           return;
         }
 
-        ws.send(
+        wsConn.send(
           JSON.stringify({
             type: "current-state",
             orderId: msg.orderId,
@@ -51,9 +59,7 @@ export function setupWS(server: any) {
         return;
       }
 
-      // ---------------------------
-      // 启动轨迹
-      // ---------------------------
+      // 启动轨迹（来自前端的控制）
       if (msg.type === "start-track") {
         let player = players.get(msg.orderId);
 
@@ -66,22 +72,20 @@ export function setupWS(server: any) {
         return;
       }
 
-      // ---------------------------
-      // 控制
-      // ---------------------------
+      // 控制：pause / resume / stop
       if (msg.type === "track-control") {
         const player = players.get(msg.orderId);
         if (!player) return;
 
-        if (msg.action === "pause") player.pause?.();
-        else if (msg.action === "resume") player.resume?.();
-        else if (msg.action === "stop") player.stop();
+        if (msg.action === "pause") player.pause();
+        if (msg.action === "resume") player.resume();
+        if (msg.action === "stop") player.stop();
 
         return;
       }
     });
 
-    ws.on("close", () => {
+    wsConn.on("close", () => {
       console.log("❌ WS 客户端断开");
     });
   });
@@ -97,6 +101,7 @@ export function startTrack(orderId: string, points: any[]) {
     player = new TrackPlayer(orderId, wssGlobal);
     players.set(orderId, player);
   }
+
   player.startWithPoints(points);
 }
 

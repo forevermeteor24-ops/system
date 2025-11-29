@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import {
-  BrowserRouter,
+  HashRouter,
   Routes,
   Route,
   Navigate,
@@ -10,41 +10,36 @@ import {
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
-import CreateOrder from "./pages/CreateOrder";
 import MyOrders from "./pages/MyOrders";
 import OrderDetail from "./pages/OrderDetail";
 import UserTrack from "./pages/UserTrack";
 import UserProfile from "./pages/UserProfile";
 
-/* -------------------------
-   是否已登录
-------------------------- */
+/* 是否已登录 */
 function isAuthed() {
   return !!localStorage.getItem("token");
 }
 
-/* -------------------------
-   强制每次访问域名时必须重新登录
-   只有进入 /login 与 /register 不清除 token
-------------------------- */
+/* 刷新强制退出（只执行一次） */
 function ForceLogin({ children }: { children: React.ReactNode }) {
   const location = useLocation();
 
   useEffect(() => {
+    if (sessionStorage.getItem("force-login-done")) return;
+
     const path = location.pathname;
 
-    // 非 login/register 页面 → 强制清除 token
     if (!path.startsWith("/login") && !path.startsWith("/register")) {
       localStorage.removeItem("token");
     }
-  }, [location.pathname]);
+
+    sessionStorage.setItem("force-login-done", "1");
+  }, []);
 
   return <>{children}</>;
 }
 
-/* -------------------------
-   受保护路由
-------------------------- */
+/* 登录保护 */
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthed() ? children : <Navigate to="/login" replace />;
 }
@@ -67,14 +62,9 @@ export default function App() {
             }
           />
 
-          <Route
-            path="/create"
-            element={
-              <PrivateRoute>
-                <CreateOrder />
-              </PrivateRoute>
-            }
-          />
+          {/* ❗ 已创建订单弹窗，因此不再需要 /create 页面
+              已从这里删除 /create 路由
+          */}
 
           <Route
             path="/orders/:id"
@@ -103,7 +93,6 @@ export default function App() {
             }
           />
 
-          {/* 其它 URL → 首页 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </ForceLogin>

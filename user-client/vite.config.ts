@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "breaking-say-incomplete-crest.trycloudflare.com"
+      "ears-operation-vegas-mails.trycloudflare.com"
     ],
   },
 });

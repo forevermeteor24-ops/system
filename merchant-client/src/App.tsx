@@ -11,17 +11,21 @@ import Profile from "./pages/Profile";
 function ForceLogin({ children }: { children: React.ReactNode }) {
   const location = useLocation();
 
-  // 如果当前访问的不是 /login 或 /register，则强制清除 token 并跳登录
   useEffect(() => {
-    if (!location.pathname.startsWith("/login") && !location.pathname.startsWith("/register")) {
+    // 仅首次加载页面时执行
+    if (sessionStorage.getItem("force-login-done")) return;
+
+    const path = location.pathname;
+
+    // 不是 /login 或 /register → 清除登录
+    if (!path.startsWith("/login") && !path.startsWith("/register")) {
       localStorage.removeItem("token");
     }
-  }, [location.pathname]);
 
-  const token = localStorage.getItem("token");
-  if (!token) return <Navigate to="/login" replace />;
+    sessionStorage.setItem("force-login-done", "1");
+  }, []);
 
-  return children;
+  return <>{children}</>;
 }
 
 export default function App() {

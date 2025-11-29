@@ -16,19 +16,24 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       title,
-      address,
+      address, // 前端传来的是对象：{ detail: "xxx", lng:..., lat:... }
       price,
       merchantId: bodyMerchantId,
       userId: bodyUserId,
     } = req.body;
 
-    if (!title || !address || price == null)
+    // 🔍 调试：看看到底传了什么进来
+    console.log("CreateOrder Recieved:", { title, price, address });
+
+    // 校验修改：防止 address 是 null 导致的报错
+    if (!title || !address || price == null) {
       return res.status(400).json({ error: "缺少 title、address 或 price" });
+    }
 
     if (typeof price !== "number" || price <= 0)
       return res.status(400).json({ error: "price 必须是正数" });
 
-    const actor = req.user;
+    const actor = (req as any).user; // 加上类型断言防止爆红
     if (!actor) return res.status(401).json({ error: "未登录" });
 
     let merchantId: string | undefined;
@@ -43,7 +48,7 @@ export async function createOrder(req: Request, res: Response) {
       userId = actor.userId;
     }
 
-    /** 商家创建订单（一般不用，但仍保留能力） */
+    /** 商家创建订单 */
     else if (actor.role === "merchant") {
       merchantId = actor.userId;
       if (bodyUserId) userId = bodyUserId;
@@ -51,15 +56,22 @@ export async function createOrder(req: Request, res: Response) {
       return res.status(403).json({ error: "无权限创建订单" });
     }
 
-    /** 创建订单（加入 price）*/
+    /** 创建订单 */
     const order = await OrderModel.create({
       title,
       price,
+      
+      // ✅✅✅ 这里是修复的核心点！
+      // 不要写 detail: address，而要拆包
       address: {
-        detail: address,
-        lng: null,
-        lat: null,
+        // 如果前端传的是对象，取它的 detail；如果传的是字符串，直接用
+        detail: typeof address === 'object' ? address.detail : address,
+        
+        // 读取前端传来的经纬度，而不是写死 null（万一以后有坐标呢）
+        lng: address.lng || null,
+        lat: address.lat || null,
       },
+
       status: "待发货",
       merchantId,
       userId,
@@ -68,7 +80,11 @@ export async function createOrder(req: Request, res: Response) {
     return res.json(order);
   } catch (err: any) {
     console.error("createOrder error:", err);
-    return res.status(500).json({ error: "创建订单失败" });
+    // 把具体错误信息返回给前端，方便 F12 查看
+    return res.status(500).json({ 
+      error: "创建订单失败", 
+      detail: err.message 
+    });
   }
 }
 

@@ -151,42 +151,63 @@ export async function getOrder(req: Request, res: Response) {
 /*商家发货*/
 export async function shipOrder(req: Request, res: Response) {
   try {
-    const actor = req.user!;
+    const actor = (req as any).user;
     const orderId = req.params.id;
 
-    // 查订单
+    console.log(`[ShipDebug] 开始发货: OrderID=${orderId}, ActorID=${actor?.userId}`);
+
+    // 1. 查订单
     const order = await OrderModel.findById(orderId);
     if (!order) return res.status(404).json({ error: "订单不存在" });
 
-    // 权限
+    // 2. 权限校验
     if (order.merchantId.toString() !== actor.userId)
       return res.status(403).json({ error: "不能发货其他商家的订单" });
 
-    // 不可重复发货
-    if (order.status !== "待发货")
-      return res.status(400).json({ error: "该订单不可发货" });
-
-    // ---- 自动路线规划 ----
+    // 4. 查商家（获取发货起点）
     const merchant = await User.findById(order.merchantId);
-    const shopAddr = merchant!.address.detail;
-    const userAddr = order.address.detail;
+    if (!merchant) return res.status(404).json({ error: "商家账户不存在" });
+    
+    // ⚠️ 关键修正：确保 merchant.address 真的有数据
+    // 注意：之前我们的 User 模型 address 可能允许了 null，这里要做防空处理
+    const shopAddrDetail = typeof merchant.address === 'object' ? merchant.address?.detail : merchant.address;
+    if (!shopAddrDetail) return res.status(400).json({ error: "商家未设置店铺地址，无法规划路线" });
 
-    const origin = await geocodeAddress(shopAddr);
-    const dest = await geocodeAddress(userAddr);
+    const userAddrDetail = typeof order.address === 'object' ? order.address?.detail : order.address;
+    if (!userAddrDetail) return res.status(400).json({ error: "用户收货地址无效" });
+
+    console.log(`[ShipDebug] 地址解析: 店铺=[${shopAddrDetail}] -> 用户=[${userAddrDetail}]`);
+
+    // 5. 路线规划 (这一步最容易挂，通常是因为没配 API Key)
+    let origin, dest;
+    try {
+        origin = await geocodeAddress(shopAddrDetail);
+        dest = await geocodeAddress(userAddrDetail);
+    } catch (geoError: any) {
+        console.error("Geocode Error:", geoError);
+        return res.status(500).json({ error: "地址解析失败，请检查地图API Key配置", detail: geoError.message });
+    }
 
     const route = await planRoute(origin, dest);
     const points = parseRouteToPoints(route);
 
-    // 启动轨迹模拟
+    // 6. 启动模拟 & 保存状态
     startTrack(orderId, points);
 
-    // 状态改为配送中
     order.status = "配送中";
     await order.save();
 
+    console.log("[ShipDebug] 发货成功！");
     return res.json(order);
-  } catch (err) {
-    return res.status(500).json({ error: "发货失败" });
+
+  } catch (err: any) {
+    console.error("shipOrder Fatal Error:", err);
+    // 🔥 把真实错误给前端，这样你看F12就知道是不是 Key 没配了
+    return res.status(500).json({ 
+        error: "发货逻辑崩溃", 
+        detail: err.message,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }
 

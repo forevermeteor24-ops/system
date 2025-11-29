@@ -20,7 +20,6 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
       <Routes>
         {/* 登录注册 —— 未登录可访问 */}
         <Route path="/login" element={<Login />} />
@@ -68,6 +67,5 @@ export default function App() {
           }
         />
       </Routes>
-    </BrowserRouter>
   );
 }

@@ -9,6 +9,7 @@ import { setupWS } from "./ws";
 import { connectDB } from "./config/db";
 import authRoutes from "./api/authRoutes";
 import merchantRoutes from "./api/merchantRoutes";
+import userRoute from "./api/userRoutes";
 
 async function main() {
   await connectDB(); // 连接 MongoDB
@@ -21,6 +22,7 @@ async function main() {
   app.use("/api/orders", orderRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/merchants", merchantRoutes);
+  app.use("/api/userRoute",userRoute);
 
   // 创建 HTTP + WebSocket
   const server = http.createServer(app);

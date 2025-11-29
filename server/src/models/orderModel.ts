@@ -1,10 +1,11 @@
 import mongoose from "mongoose";
 
 export type OrderStatus =
-  | "pending"
-  | "shipped"
-  | "delivering"
-  | "delivered";
+  | "待发货"
+  | "配送中"
+  | "已送达"
+  | "用户申请退货"
+  | "商家已取消";
 
 /** 地址结构 */
 const AddressSchema = new mongoose.Schema(
@@ -20,32 +21,40 @@ const OrderSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
 
-    /** ⭐地址从 String → 对象 */
+    /** 地址对象 */
     address: { type: AddressSchema, required: true },
 
-    /** ⭐订单所属商家 */
+    /** 商家 */
     merchantId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      required: true,
     },
 
-    /** ⭐下单用户 */
+    /** 下单用户 */
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      required: true,
     },
-    
+
+    /** 商品价格 */
     price: { type: Number, required: true },
 
+    /** 中文订单状态 */
     status: {
       type: String,
-      enum: ["pending", "shipped", "delivering", "delivered"],
-      default: "pending",
+      enum: [
+        "待发货",
+        "配送中",
+        "已送达",
+        "用户申请退货",
+        "商家已取消",
+      ],
+      default: "待发货",
     },
 
-    /** ⭐轨迹进度（重启恢复） */
+    /** 轨迹进度（重启恢复） */
     trackState: {
       index: { type: Number, default: 0 },
       total: { type: Number, default: 0 },

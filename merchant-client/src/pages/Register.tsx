@@ -1,67 +1,180 @@
-import { useState } from "react";
-import http from "../api/http";
+import React, { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
 
 export default function Register() {
+  const navigate = useNavigate();
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPwd, setConfirmPwd] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+
   const [address, setAddress] = useState("");
 
-  const register = async () => {
-    if (!username || !password || !address) {
-      alert("请填写完整信息（用户名、密码、地址）");
+  const [loading, setLoading] = useState(false);
+
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (password !== confirmPwd) {
+      alert("两次输入的密码不一致！");
       return;
     }
 
+    setLoading(true);
+
     try {
-      await http.post("/auth/register", {
-        username,
-        password,
-        role: "merchant", // 固定为商家
-        address,          // ⭐ 直接传字符串 → 后端会自动包装成 {detail, lng, lat}
+      const res = await fetch("https://system-backend.zeabur.app/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password,
+          role: "merchant", // ⭐ 固定为商家
+          address: {
+            detail: address,
+            lng: null,
+            lat: null,
+          },
+        }),
       });
 
-      alert("商家注册成功");
-      location.href = "/#/login";
-    } catch (err: any) {
-      alert(err.response?.data?.error || "注册失败");
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "注册失败");
+        setLoading(false);
+        return;
+      }
+
+      alert("商家注册成功，请登录！");
+      navigate("/login");
+
+    } catch (err) {
+      console.error(err);
+      alert("注册失败，请检查网络");
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   return (
-    <div style={{ padding: 32 }}>
-      <h2>商家注册</h2>
+    <div
+      style={{
+        maxWidth: 420,
+        margin: "50px auto",
+        padding: 20,
+        borderRadius: 8,
+        background: "#fff",
+        boxShadow: "0 0 10px rgba(0,0,0,0.05)",
+      }}
+    >
+      <h2 style={{ textAlign: "center", marginBottom: 20 }}>商家注册</h2>
 
-      <div style={{ marginBottom: 12 }}>
-        <input
-          placeholder="用户名"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          style={{ width: 240, padding: 8 }}
-        />
+      <form onSubmit={handleRegister}>
+        {/* 用户名 */}
+        <div style={{ marginBottom: 15 }}>
+          <label>商家账号</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            placeholder="请输入商家登录名"
+            style={inputStyle}
+          />
+        </div>
+
+        {/* 密码 */}
+        <div style={{ marginBottom: 15, position: "relative" }}>
+          <label>密码</label>
+          <input
+            type={showPwd ? "text" : "password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            placeholder="请输入密码"
+            style={inputStyle}
+          />
+          <span
+            style={eyeStyle}
+            onClick={() => setShowPwd(!showPwd)}
+          >
+            {showPwd ? "🙈" : "👁️"}
+          </span>
+        </div>
+
+        {/* 确认密码 */}
+        <div style={{ marginBottom: 15 }}>
+          <label>确认密码</label>
+          <input
+            type={showPwd ? "text" : "password"}
+            value={confirmPwd}
+            onChange={(e) => setConfirmPwd(e.target.value)}
+            required
+            placeholder="请再次输入密码"
+            style={inputStyle}
+          />
+        </div>
+
+        {/* 地址 */}
+        <div style={{ marginBottom: 15 }}>
+          <label>店铺地址</label>
+          <input
+            type="text"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            required
+            placeholder="请输入店铺地址（如：北京市海淀区xxx）"
+            style={inputStyle}
+          />
+        </div>
+
+        {/* 注册按钮 */}
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: 12,
+            background: "#4a90e2",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            fontSize: 16,
+            cursor: "pointer",
+            opacity: loading ? 0.6 : 1,
+          }}
+        >
+          {loading ? "注册中..." : "立即注册"}
+        </button>
+      </form>
+
+      {/* 跳转登录 */}
+      <div style={{ marginTop: 20, textAlign: "center" }}>
+        已有账号？
+        <Link to="/login" style={{ color: "#4a90e2", marginLeft: 5 }}>
+          立即登录
+        </Link>
       </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <input
-          type="password"
-          placeholder="密码"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ width: 240, padding: 8 }}
-        />
-      </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <input
-          placeholder="商家地址（如：上海市浦东新区张江高科）"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          style={{ width: 240, padding: 8 }}
-        />
-      </div>
-
-      <button onClick={register} style={{ padding: "8px 24px" }}>
-        注册
-      </button>
     </div>
   );
 }
+
+/* 输入框样式 */
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 40px 10px 10px",
+  marginTop: 5,
+  borderRadius: 6,
+  border: "1px solid #ccc",
+};
+
+/* 小眼睛按钮 */
+const eyeStyle: React.CSSProperties = {
+  position: "absolute",
+  right: 10,
+  top: 38,
+  cursor: "pointer",
+  fontSize: 20,
+};

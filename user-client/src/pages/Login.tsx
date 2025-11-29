@@ -19,9 +19,12 @@ export default function Login() {
       const res = await fetch("https://system-backend.zeabur.app/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+          role: "user",      // ⭐ 商家端固定 role=user
+        }),
       });
-
       const data = await res.json();
 
       if (!res.ok) {

@@ -7,19 +7,21 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
-
   const [loading, setLoading] = useState(false);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-
     setLoading(true);
 
     try {
       const res = await fetch("https://system-backend.zeabur.app/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+          role: "merchant",      // ⭐ 商家端固定 role=merchant
+        }),
       });
 
       const data = await res.json();
@@ -36,9 +38,8 @@ export default function Login() {
 
       alert("登录成功！");
 
-      /* 按角色跳转 */
-      if (data.role === "merchant") navigate("/merchant/orders");
-      else navigate("/orders");
+      /* 商家端跳转到订单 */
+      navigate("/orders");
 
     } catch (err) {
       console.error(err);
@@ -59,7 +60,7 @@ export default function Login() {
         boxShadow: "0 0 10px rgba(0,0,0,0.06)",
       }}
     >
-      <h2 style={{ textAlign: "center", marginBottom: 25 }}>登录</h2>
+      <h2 style={{ textAlign: "center", marginBottom: 25 }}>商家登录</h2>
 
       <form onSubmit={handleLogin}>
         {/* 用户名 */}

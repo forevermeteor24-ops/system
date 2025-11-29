@@ -53,7 +53,11 @@ export const register = async (req: Request, res: Response) => {
 
 export const login = async (req: Request, res: Response) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, role } = req.body;
+
+    if (!username || !password || !role) {
+      return res.status(400).json({ error: "缺少参数（username, password, role）" });
+    }
 
     // 查找用户
     const user = await User.findOne({ username });
@@ -62,6 +66,13 @@ export const login = async (req: Request, res: Response) => {
     // 校验密码
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(400).json({ error: "密码错误" });
+
+    // 🚨 核心逻辑：验证角色是否匹配当前端（非常重要）
+    if (user.role !== role) {
+      return res.status(403).json({
+        error: `账号类型不允许在此端登录（该账号属于 ${user.role}）`,
+      });
+    }
 
     // 生成 token
     const token = jwt.sign(

@@ -1,19 +1,18 @@
-/* ===========================================
-   类型定义（完全匹配你的后端）
-=========================================== */
-
+/* 地址结构 */
 export interface Address {
   detail: string;
   lng: number | null;
   lat: number | null;
 }
 
+/* 用户信息 */
 export interface UserInfo {
   _id: string;
   username: string;
   address: Address;
 }
 
+/* 订单状态（中文） */
 export type OrderStatus =
   | "待发货"
   | "配送中"
@@ -21,19 +20,35 @@ export type OrderStatus =
   | "用户申请退货"
   | "商家已取消";
 
+/* 后端已存在 trackState 字段（保持可选） */
+export interface TrackState {
+  index: number;
+  total: number;
+  lastPosition: {
+    lng: number | null;
+    lat: number | null;
+  };
+}
+
+/* 订单结构 */
 export interface Order {
   _id: string;
   title: string;
   price: number;
+
   address: Address;
 
-  merchantId: string | UserInfo;
-  userId: string | UserInfo;
+  merchantId: UserInfo;
+  userId: UserInfo;
 
   status: OrderStatus;
+
+  trackState?: TrackState;
+
   createdAt: string;
   updatedAt: string;
 }
+
 
 /* ===========================
    API BASE（你的后端地址）
@@ -131,6 +146,23 @@ export async function deleteOrder(id: string) {
   if (!res.ok) throw new Error("Failed to delete order");
   return res.json();
 }
+
+/** 请求路线：只需要 orderId */
+export async function requestRoute(orderId: string) {
+  const res = await fetch(`${BASE}/route`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+    },
+    body: JSON.stringify({ orderId }),
+  });
+
+  if (!res.ok) throw new Error("Failed to request route");
+
+  return res.json();
+}
+
 
 /* ===========================
    7. 获取路线（前端地图使用）

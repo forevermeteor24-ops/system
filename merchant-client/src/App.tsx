@@ -1,71 +1,64 @@
-import React from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import React, { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 
 import Login from "./pages/Login";
 import Register from "./pages/Register";
-
 import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Profile from "./pages/Profile";
 
-/** 判断是否已登录 */
-function isAuthed() {
-  return !!localStorage.getItem("token");
-}
+/** 强制每次访问都要求登录 */
+function ForceLogin({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
 
-/** 路由守卫 */
-function PrivateRoute({ children }: { children: React.ReactNode }) {
-  return isAuthed() ? children : <Navigate to="/login" replace />;
+  // 如果当前访问的不是 /login 或 /register，则强制清除 token 并跳登录
+  useEffect(() => {
+    if (!location.pathname.startsWith("/login") && !location.pathname.startsWith("/register")) {
+      localStorage.removeItem("token");
+    }
+  }, [location.pathname]);
+
+  const token = localStorage.getItem("token");
+  if (!token) return <Navigate to="/login" replace />;
+
+  return children;
 }
 
 export default function App() {
   return (
       <Routes>
-        {/* 登录注册 —— 未登录可访问 */}
+        {/* 登录、注册允许访问 */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
 
-        {/* 商家订单列表 */}
+        {/* 其它页面：强制登录 */}
         <Route
           path="/orders"
           element={
-            <PrivateRoute>
+            <ForceLogin>
               <Orders />
-            </PrivateRoute>
+            </ForceLogin>
           }
         />
-
-        {/* 商家订单详情 */}
         <Route
           path="/orders/:id"
           element={
-            <PrivateRoute>
+            <ForceLogin>
               <OrderDetail />
-            </PrivateRoute>
+            </ForceLogin>
           }
         />
-
-        {/* 商家资料修改 */}
         <Route
           path="/merchant/profile"
           element={
-            <PrivateRoute>
+            <ForceLogin>
               <Profile />
-            </PrivateRoute>
+            </ForceLogin>
           }
         />
 
-        {/* 默认跳转规则 */}
-        <Route
-          path="*"
-          element={
-            isAuthed() ? (
-              <Navigate to="/orders" replace />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
+        {/* 默认跳 orders（但仍会被 ForceLogin 拉回 login） */}
+        <Route path="*" element={<Navigate to="/orders" replace />} />
       </Routes>
   );
 }

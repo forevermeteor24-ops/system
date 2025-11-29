@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "millennial-irremeably-millie.ngrok-free.dev"
+      "breaking-say-incomplete-crest.trycloudflare.com"
     ],
   },
 });

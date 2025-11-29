@@ -43,13 +43,17 @@ export default function OrderDetail() {
       >
         <p><strong>订单号：</strong> {order._id}</p>
         <p><strong>商品名：</strong> {order.title}</p>
-        <p><strong>收货地址：</strong> {order.address.detail}</p>
+
+        {/* ✔ 价格 */}
+        <p><strong>价格：</strong> ¥{order.price.toFixed(2)}</p>
+
+        <p><strong>收货地址：</strong> {order.address?.detail}</p>
 
         <p><strong>商家：</strong> {order.merchantId?.username}</p>
         <p><strong>用户：</strong> {order.userId?.username}</p>
 
         <p>
-          <strong>状态：</strong> 
+          <strong>状态：</strong>
           <span style={{ color: "#1677ff" }}>{order.status}</span>
         </p>
 

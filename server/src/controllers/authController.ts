@@ -59,20 +59,15 @@ export const login = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "缺少参数（username, password, role）" });
     }
 
-    // 查找用户
-    const user = await User.findOne({ username });
-    if (!user) return res.status(400).json({ error: "账号不存在" });
+    // 查找对应角色的账号（避免 user 登录 merchant 端）
+    const user = await User.findOne({ username, role });
+    if (!user) {
+      return res.status(400).json({ error: "账号不存在或角色不匹配" });
+    }
 
     // 校验密码
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(400).json({ error: "密码错误" });
-
-    // 🚨 核心逻辑：验证角色是否匹配当前端（非常重要）
-    if (user.role !== role) {
-      return res.status(403).json({
-        error: `账号类型不允许在此端登录（该账号属于 ${user.role}）`,
-      });
-    }
 
     // 生成 token
     const token = jwt.sign(
@@ -85,6 +80,7 @@ export const login = async (req: Request, res: Response) => {
       token,
       role: user.role,
     });
+
   } catch (err) {
     console.error("login error:", err);
     res.status(500).json({ error: "登录失败" });

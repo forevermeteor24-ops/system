@@ -233,15 +233,21 @@ export default function OrderDetail() {
           <p><b>状态：</b>{order.status}</p>
 
           {/* 用户可以申请退货 */}
-          {order.status === "配送中" && (
-            <button onClick={handleReturnRequest} style={{ background: "#ff4d4d", padding: "8px 18px", color: "#fff" }}>
+          {(order.status === "配送中" || order.status === "待发货") && (
+            <button
+              onClick={handleReturnRequest}
+              style={{ background: "#ff4d4d", padding: "8px 18px", color: "#fff" }}
+            >
               申请退货
             </button>
           )}
 
           {/* 送达后可以删除订单 */}
           {order.status === "已送达" && (
-            <button onClick={handleDelete} style={{ background: "#4caf50", padding: "8px 18px", color: "#fff" }}>
+            <button
+              onClick={handleDelete}
+              style={{ background: "#4caf50", padding: "8px 18px", color: "#fff" }}
+            >
               删除订单
             </button>
           )}

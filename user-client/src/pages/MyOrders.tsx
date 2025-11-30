@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";  // 使用 Link 跳转
+import { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";  // 使用 Link 跳转
 import { fetchOrders } from "../api/orders";
 import { fetchMerchants } from "../api/merchants";
 import http from "../api/http";
@@ -16,6 +16,8 @@ export default function MyOrders() {
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [userAddress, setUserAddress] = useState("");
+
+  const navigate = useNavigate();  // 使用 useNavigate
 
   const loadCreateOrderData = async () => {
     try {
@@ -84,14 +86,21 @@ export default function MyOrders() {
     return 0;
   });
 
+  /* 退出登录 */
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    navigate("/login");  // 使用 navigate 跳转到登录页面
+  };
+
   if (loading) return <div>加载中...</div>;
 
   return (
     <div style={{ padding: 24 }}>
       <h2>我的订单</h2>
 
+      {/* 顶部按钮：退出登录 */}
       <button
-        onClick={() => localStorage.removeItem("token")}
+        onClick={handleLogout}
         style={{
           marginBottom: 20,
           padding: "10px 14px",
@@ -105,6 +114,23 @@ export default function MyOrders() {
         退出登录
       </button>
 
+      {/* 修改账户信息按钮 */}
+      <button
+        onClick={() => navigate("/profile")}  // 导航到个人信息页面
+        style={{
+          marginBottom: 20,
+          padding: "10px 14px",
+          background: "#007bff",
+          color: "#fff",
+          border: "none",
+          borderRadius: 6,
+          cursor: "pointer",
+        }}
+      >
+        修改账户信息
+      </button>
+
+      {/* 创建订单按钮 */}
       <button
         onClick={openModal}
         style={{
@@ -120,6 +146,7 @@ export default function MyOrders() {
         创建订单
       </button>
 
+      {/* 排序下拉框 */}
       <div style={{ margin: "12px 0" }}>
         <label>排序方式： </label>
         <select
@@ -134,6 +161,7 @@ export default function MyOrders() {
         </select>
       </div>
 
+      {/* 订单列表 */}
       {sortedOrders.map((o) => (
         <div key={o._id} style={{ padding: "12px 0", borderBottom: "1px solid #eee" }}>
           <Link to={`/orders/${o._id}`} style={{ fontSize: 16 }}>
@@ -144,10 +172,123 @@ export default function MyOrders() {
             <br />
             价格：{o.price} 元
             <br />
-            创建时间：{o.createdAt ? new Date(o.createdAt).toLocaleString() : '未知'}
+            创建时间：{o.createdAt ? new Date(o.createdAt).toLocaleString() : "未知"}
           </div>
         </div>
       ))}
+
+      {/* 创建订单弹窗 */}
+      {showModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 999,
+          }}
+        >
+          <div
+            style={{
+              width: 350,
+              background: "#fff",
+              padding: 20,
+              borderRadius: 8,
+            }}
+          >
+            <h3>创建订单</h3>
+
+            <div style={{ marginTop: 15 }}>
+              <label>商家</label>
+              <select
+                value={merchantId}
+                onChange={(e) => setMerchantId(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+              >
+                <option value="">请选择商家</option>
+                {merchants.map((m) => (
+                  <option key={m._id} value={m._id}>
+                    {m.username}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginTop: 15 }}>
+              <label>商品名称</label>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+              />
+            </div>
+
+            <div style={{ marginTop: 15 }}>
+              <label>价格</label>
+              <input
+                type="number"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                style={{ width: "100%", padding: 8, marginTop: 6 }}
+              />
+            </div>
+
+            <div style={{ marginTop: 15 }}>
+              <label>地址</label>
+              <input
+                value={userAddress}
+                readOnly
+                placeholder="正在获取用户地址..."
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  marginTop: 6,
+                  background: "#eee",
+                }}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={createOrder}
+              style={{
+                marginTop: 20,
+                width: "100%",
+                padding: "10px 14px",
+                background: "#007bff",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              提交
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              style={{
+                marginTop: 10,
+                width: "100%",
+                padding: "10px 14px",
+                background: "#aaa",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

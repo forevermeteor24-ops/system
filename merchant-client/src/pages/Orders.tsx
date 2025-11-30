@@ -1,12 +1,6 @@
 import React, { useEffect, useState } from "react";
-import {
-  fetchOrders,
-  updateStatus,
-  shipOrder,
-  deleteOrder,
-  type Order,
-} from "../api/orders";
 import { Link, useNavigate } from "react-router-dom";
+import { fetchOrders, updateStatus, shipOrder, deleteOrder, type Order } from "../api/orders";
 
 export default function MerchantHome() {
   const navigate = useNavigate();
@@ -14,9 +8,7 @@ export default function MerchantHome() {
   const [loading, setLoading] = useState(true);
   const [sortField, setSortField] = useState<"time" | "price">("time");
 
-  /* -----------------------
-     加载订单
-  ----------------------- */
+  /* ----------------------- 加载订单 ----------------------- */
   const load = async () => {
     setLoading(true);
     try {
@@ -30,9 +22,7 @@ export default function MerchantHome() {
     }
   };
 
-  /* -----------------------
-     排序函数
-  ----------------------- */
+  /* ----------------------- 排序函数 ----------------------- */
   const sortOrders = (list: Order[], field: "time" | "price") => {
     if (field === "price") {
       return [...list].sort((a, b) => a.price - b.price);
@@ -53,10 +43,7 @@ export default function MerchantHome() {
     load();
   }, []);
 
-  /* -----------------------
-     商家操作
-  ----------------------- */
-
+  /* ----------------------- 商家操作 ----------------------- */
   const doShip = async (id: string) => {
     if (!confirm("确认发货？路线自动规划并开始配送轨迹模拟。")) return;
     await shipOrder(id);
@@ -75,9 +62,13 @@ export default function MerchantHome() {
     load();
   };
 
-  /* -----------------------
-     渲染
-  ----------------------- */
+  /* ----------------------- 退出登录 ----------------------- */
+  const handleLogout = () => {
+    localStorage.removeItem("token");  // 清除token
+    navigate("/login");  // 跳转到登录页面
+  };
+
+  /* ----------------------- 渲染 ----------------------- */
   return (
     <div style={{ padding: 20 }}>
       {/* 顶部标题 + 账户按钮 */}
@@ -98,6 +89,23 @@ export default function MerchantHome() {
         </button>
       </div>
 
+      {/* 退出登录按钮 */}
+      <button
+        onClick={handleLogout}
+        style={{
+          marginBottom: 10,
+          padding: "10px 14px",
+          background: "#ff4d4d",
+          color: "#fff",
+          border: "none",
+          borderRadius: 6,
+          cursor: "pointer",
+        }}
+      >
+        退出登录
+      </button>
+
+      {/* 刷新按钮 */}
       <button onClick={load} style={{ marginBottom: 10 }}>
         刷新
       </button>

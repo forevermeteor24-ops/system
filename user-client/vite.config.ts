@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "mandatory-issues-roof-settings.trycloudflare.com"
+      "couple-dude-buffalo-rock.trycloudflare.com"
     ],
   },
 });

@@ -90,6 +90,13 @@ export class TrackPlayer {
         total: this.points.length,
         position: final,
       });
+      // 更新订单状态为 "已送达"
+      const order = await OrderModel.findById(this.orderId);
+       if (order) {
+         order.status = "已送达";  // 状态更新为已送达
+         await order.save();  // 保存到数据库
+         console.log(`✔ Order ${this.orderId} status updated to "已送达"`);
+       }
 
       await this.saveState();
       this.stopped = true;

@@ -1,4 +1,7 @@
-/* 地址结构 */
+/* ===========================================
+   类型定义（完全匹配你的后端）
+=========================================== */
+import axios from 'axios';
 export interface Address {
   detail: string;
   lng: number | null;
@@ -49,7 +52,6 @@ export interface Order {
   updatedAt: string;
 }
 
-
 /* ===========================
    API BASE（你的后端地址）
 =========================== */
@@ -71,7 +73,7 @@ export async function fetchOrders(): Promise<Order[]> {
   const res = await fetch(BASE, {
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to fetch orders");
+  if (!res.ok) throw new Error("获取订单列表失败");
   return res.json();
 }
 
@@ -82,7 +84,7 @@ export async function fetchOrder(id: string): Promise<Order> {
   const res = await fetch(`${BASE}/${id}`, {
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to fetch order");
+  if (!res.ok) throw new Error("获取订单失败");
   return res.json();
 }
 
@@ -100,7 +102,7 @@ export async function createOrder(payload: {
     headers: authHeader(),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error("Failed to create order");
+  if (!res.ok) throw new Error("创建订单失败");
   return res.json();
 }
 
@@ -112,7 +114,7 @@ export async function shipOrder(id: string) {
     method: "PUT",
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to ship order");
+  if (!res.ok) throw new Error("发货请求失败");
   return res.json();
 }
 
@@ -131,7 +133,7 @@ export async function updateStatus(id: string, status: OrderStatus) {
     headers: authHeader(),
     body: JSON.stringify({ status }),
   });
-  if (!res.ok) throw new Error("Failed to update order");
+  if (!res.ok) throw new Error("更新订单状态失败");
   return res.json();
 }
 
@@ -143,34 +145,52 @@ export async function deleteOrder(id: string) {
     method: "DELETE",
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to delete order");
+  if (!res.ok) throw new Error("删除订单失败");
   return res.json();
 }
 
-/** 请求路线：只需要 orderId */
+/* ===========================
+   7. 请求路线：只需要 orderId
+=========================== */
 export async function requestRoute(orderId: string) {
-  const res = await fetch(`${BASE}/route`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
-    },
-    body: JSON.stringify({ orderId }),
-  });
+  try {
+    const url = `${BASE}/route?id=${orderId}`;  // 完整的 API 地址
+    console.log("发送路径规划请求：", url);
 
-  if (!res.ok) throw new Error("Failed to request route");
+    const token = localStorage.getItem("token");  // 获取存储的 token
+    if (!token) {
+      console.error("没有授权 Token，无法发送请求");
+      throw new Error("没有授权 Token");
+    }
 
-  return res.json();
+    const response = await axios.get(url, {
+      headers: {
+        "Authorization": `Bearer ${token}`,  // 将 Token 传递给请求头
+        "Content-Type": "application/json",
+      }
+    });
+    
+    console.log("路径规划响应：", response.data);  // 输出响应内容，检查返回的数据
+    
+    return response.data;
+  } catch (err) {
+    console.error("路径规划请求失败：", err);
+    throw new Error("路径规划失败");
+  }
 }
+
+
+
+
 
 
 /* ===========================
-   7. 获取路线（前端地图使用）
+   8. 获取路线（前端地图使用）
 =========================== */
 export async function getRoute(orderId: string) {
   const res = await fetch(`${BASE}/route?id=${orderId}`, {
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to get route");
+  if (!res.ok) throw new Error("获取路线失败");
   return res.json();
 }

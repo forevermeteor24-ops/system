@@ -1,18 +1,15 @@
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";  // 使用 Link 跳转
 import { fetchOrders } from "../api/orders";
-// 👇 新增：引入你那个写对了地址的 API 函数
-import { fetchMerchants } from "../api/merchants"; 
-import type { Order } from "../types/order";
+import { fetchMerchants } from "../api/merchants";
 import http from "../api/http";
+import type { Order } from "../types/order";
 
 export default function MyOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [sort, setSort] = useState("time_desc");
 
-  /* 创建订单弹窗控制 */
   const [showModal, setShowModal] = useState(false);
   const [merchants, setMerchants] = useState<any[]>([]);
   const [merchantId, setMerchantId] = useState("");
@@ -20,16 +17,10 @@ export default function MyOrders() {
   const [price, setPrice] = useState("");
   const [userAddress, setUserAddress] = useState("");
 
-  /** 加载商家列表 & 用户地址 */
   const loadCreateOrderData = async () => {
     try {
-      // ✅ 修复：不再使用 http.get，改用 fetchMerchants() 直连 Zeabur
-      // 这样能保证一定会从线上服务器拉取商家列表
       const data = await fetchMerchants();
       setMerchants(data);
-
-      // 获取当前用户的地址
-      // ⚠️ 注意：如果 http.ts 配置不对，这步可能还会报错，稍后检查 src/api/http.ts
       const u = await http.get("/api/auth/me");
       setUserAddress(u.data.address?.detail || "");
     } catch (err) {
@@ -38,7 +29,6 @@ export default function MyOrders() {
     }
   };
 
-  /** 获取订单列表 */
   useEffect(() => {
     (async () => {
       try {
@@ -53,13 +43,11 @@ export default function MyOrders() {
     })();
   }, []);
 
-  /* 打开弹窗 */
   const openModal = () => {
     loadCreateOrderData();
     setShowModal(true);
   };
 
-  /* 创建订单 */
   const createOrder = async () => {
     if (!merchantId) return alert("请选择商家！");
     if (!title.trim()) return alert("请输入商品名称！");
@@ -77,7 +65,6 @@ export default function MyOrders() {
       alert("创建成功！");
       setShowModal(false);
 
-      // 刷新订单
       const data = await fetchOrders();
       setOrders(data);
     } catch (err) {
@@ -86,12 +73,10 @@ export default function MyOrders() {
     }
   };
 
-  /* 排序逻辑 */
   const sortedOrders = [...orders].sort((a, b) => {
-    // 简单的类型保护，防止 createdAt 为空报错
     const tA = a.createdAt ? +new Date(a.createdAt) : 0;
     const tB = b.createdAt ? +new Date(b.createdAt) : 0;
-    
+
     if (sort === "time_desc") return tB - tA;
     if (sort === "time_asc") return tA - tB;
     if (sort === "price_desc") return (b.price || 0) - (a.price || 0);
@@ -105,7 +90,21 @@ export default function MyOrders() {
     <div style={{ padding: 24 }}>
       <h2>我的订单</h2>
 
-      {/* 顶部按钮 */}
+      <button
+        onClick={() => localStorage.removeItem("token")}
+        style={{
+          marginBottom: 20,
+          padding: "10px 14px",
+          background: "#ff4d4d",
+          color: "#fff",
+          border: "none",
+          borderRadius: 6,
+          cursor: "pointer",
+        }}
+      >
+        退出登录
+      </button>
+
       <button
         onClick={openModal}
         style={{
@@ -121,7 +120,6 @@ export default function MyOrders() {
         创建订单
       </button>
 
-      {/* 排序下拉框 */}
       <div style={{ margin: "12px 0" }}>
         <label>排序方式： </label>
         <select
@@ -136,13 +134,11 @@ export default function MyOrders() {
         </select>
       </div>
 
-      {/* 订单列表 */}
       {sortedOrders.map((o) => (
         <div key={o._id} style={{ padding: "12px 0", borderBottom: "1px solid #eee" }}>
-          <Link to={`/track/${o._id}`} style={{ fontSize: 16 }}>
+          <Link to={`/orders/${o._id}`} style={{ fontSize: 16 }}>
             <b>{o.title}</b>
           </Link>
-
           <div style={{ fontSize: 14, color: "#888" }}>
             状态：{o.status}
             <br />
@@ -152,119 +148,6 @@ export default function MyOrders() {
           </div>
         </div>
       ))}
-
-      {/* 创建订单弹窗 */}
-      {showModal && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 999,
-          }}
-        >
-          <div
-            style={{
-              width: 350,
-              background: "#fff",
-              padding: 20,
-              borderRadius: 8,
-            }}
-          >
-            <h3>创建订单</h3>
-
-            <div style={{ marginTop: 15 }}>
-              <label>商家</label>
-              <select
-                value={merchantId}
-                onChange={(e) => setMerchantId(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 6 }}
-              >
-                <option value="">请选择商家</option>
-                {merchants.map((m) => (
-                  <option key={m._id} value={m._id}>
-                    {m.username}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ marginTop: 15 }}>
-              <label>商品名称</label>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 6 }}
-              />
-            </div>
-
-            <div style={{ marginTop: 15 }}>
-              <label>价格</label>
-              <input
-                type="number"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 6 }}
-              />
-            </div>
-
-            <div style={{ marginTop: 15 }}>
-              <label>地址</label>
-              <input
-                value={userAddress}
-                readOnly
-                placeholder="正在获取用户地址..."
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  marginTop: 6,
-                  background: "#eee",
-                }}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={createOrder}
-              style={{
-                marginTop: 20,
-                width: "100%",
-                padding: "10px 14px",
-                background: "#007bff",
-                color: "#fff",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-              }}
-            >
-              提交
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowModal(false)}
-              style={{
-                marginTop: 10,
-                width: "100%",
-                padding: "10px 14px",
-                background: "#aaa",
-                color: "#fff",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-              }}
-            >
-              取消
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

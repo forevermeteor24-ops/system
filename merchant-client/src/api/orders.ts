@@ -136,18 +136,20 @@ export async function deleteOrder(id: string) {
 =========================== */
 export async function requestRoute(orderId: string) {
   try {
-    const url = `/api/orders/route?id=${orderId}`;
+    const url = `${BASE}/route`;  // 使用 POST 请求
     console.log("发送路径规划请求：", url);  // 添加调试日志，查看请求 URL
-    const response = await axios.get(url);
-    
+    const response = await axios.post(url, { id: orderId });  // 发送 POST 请求，并传递 orderId
+
     console.log("路径规划响应：", response.data);  // 输出响应内容，检查返回的数据
-    
+
     return response.data;
   } catch (err) {
     console.error("路径规划请求失败：", err);
     throw new Error("路径规划失败");
   }
 }
+
+
 
 
 

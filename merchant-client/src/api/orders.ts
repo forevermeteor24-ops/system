@@ -26,10 +26,8 @@ export interface Order {
   title: string;
   price: number;
   address: Address;
-
   merchantId: string;
   userId: string;
-
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
@@ -56,7 +54,7 @@ export async function fetchOrders(): Promise<Order[]> {
   const res = await fetch(BASE, {
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to fetch orders");
+  if (!res.ok) throw new Error("获取订单列表失败");
   return res.json();
 }
 
@@ -67,7 +65,7 @@ export async function fetchOrder(id: string): Promise<Order> {
   const res = await fetch(`${BASE}/${id}`, {
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to fetch order");
+  if (!res.ok) throw new Error("获取订单失败");
   return res.json();
 }
 
@@ -85,7 +83,7 @@ export async function createOrder(payload: {
     headers: authHeader(),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error("Failed to create order");
+  if (!res.ok) throw new Error("创建订单失败");
   return res.json();
 }
 
@@ -97,7 +95,7 @@ export async function shipOrder(id: string) {
     method: "PUT",
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to ship order");
+  if (!res.ok) throw new Error("发货请求失败");
   return res.json();
 }
 
@@ -116,7 +114,7 @@ export async function updateStatus(id: string, status: OrderStatus) {
     headers: authHeader(),
     body: JSON.stringify({ status }),
   });
-  if (!res.ok) throw new Error("Failed to update order");
+  if (!res.ok) throw new Error("更新订单状态失败");
   return res.json();
 }
 
@@ -128,35 +126,39 @@ export async function deleteOrder(id: string) {
     method: "DELETE",
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to delete order");
+  if (!res.ok) throw new Error("删除订单失败");
   return res.json();
 }
 
-/** 请求路线：只需要 orderId */
+/* ===========================
+   7. 请求路线：只需要 orderId
+=========================== */
 export async function requestRoute(orderId: string) {
-  const res = await fetch(`${BASE}/route`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
-    },
-    body: JSON.stringify({ orderId }),
-  });
+  try {
+    const res = await fetch(`${BASE}/route`, {
+      method: "POST",
+      headers: authHeader(),
+      body: JSON.stringify({ orderId }),
+    });
 
-  if (!res.ok) throw new Error("Failed to request route");
+    if (!res.ok) {
+      throw new Error("请求路线失败");
+    }
 
-  return res.json();
+    return res.json();
+  } catch (error: any) {
+    alert("错误详情: " + error.message); // 捕获并显示错误信息
+  }
 }
-
 
 
 /* ===========================
-   7. 获取路线（前端地图使用）
+   8. 获取路线（前端地图使用）
 =========================== */
 export async function getRoute(orderId: string) {
   const res = await fetch(`${BASE}/route?id=${orderId}`, {
     headers: authHeader(),
   });
-  if (!res.ok) throw new Error("Failed to get route");
+  if (!res.ok) throw new Error("获取路线失败");
   return res.json();
 }

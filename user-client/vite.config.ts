@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "ears-operation-vegas-mails.trycloudflare.com"
+      "essex-assigned-coordination-jewel.trycloudflare.com"
     ],
   },
 });

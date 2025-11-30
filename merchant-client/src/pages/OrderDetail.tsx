@@ -56,6 +56,8 @@ export default function OrderDetail() {
       /* 请求后端路线：后端会根据商家 id 自动查商家地址 */
       const r = await requestRoute(o._id);
 
+      console.log("路径规划响应数据：", r);  // 添加调试信息
+
       if (r?.points?.length > 0) {
         setRoutePoints(r.points);
         setRouteLoaded(true);
@@ -94,6 +96,9 @@ export default function OrderDetail() {
 
         map.add(marker);
         markerRef.current = marker;
+      } else {
+        console.error("路径规划数据无效");  // 如果没有路径数据
+        alert("路径规划失败，请检查数据！");
       }
     })();
 
@@ -122,7 +127,8 @@ export default function OrderDetail() {
       let msg;
       try {
         msg = JSON.parse(ev.data);
-      } catch {
+      } catch (e) {
+        console.error("WebSocket 数据解析失败", e);
         return;
       }
 
@@ -171,9 +177,21 @@ export default function OrderDetail() {
 
   /* 商家发货 */
   async function handleShip() {
-    const updated = await shipOrder(order._id);
-    setOrder(updated);
-    alert("🚚 已发货，车辆开始配送！");
+    try {
+      const updated = await shipOrder(order._id);
+      setOrder(updated);
+      alert("🚚 已发货，车辆开始配送！");
+    } catch (err: unknown) {
+      // 将 err 转换为 Error 类型
+      if (err instanceof Error) {
+        console.error("发货请求失败:", err);
+        alert(`发货失败：${err.message}`);
+      } else {
+        console.error("未知错误:", err);
+        alert("发货失败：未知错误");
+      }
+    }
+    
   }
 
   /* 商家取消 */

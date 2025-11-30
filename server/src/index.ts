@@ -9,6 +9,7 @@ import { setupWS } from "./ws";
 import { connectDB } from "./config/db";
 import authRoutes from "./api/authRoutes";
 import merchantRoutes from "./api/merchantRoutes";
+import productRoutes from "./api/productRoutes"; // 引入 productRoutes
 
 async function main() {
   await connectDB();
@@ -21,16 +22,14 @@ async function main() {
   app.use("/api/auth", authRoutes);
   app.use("/api/orders", orderRoutes);
   app.use("/api/merchants", merchantRoutes);
-
-  // ❌ 不要这个：app.use("/api/userRoute", userRoute);
-  // 因为 /me 已经放到了 authRoutes
+  app.use("/api/products", productRoutes);  // 挂载商品路由
 
   const server = http.createServer(app);
   setupWS(server);
 
   const PORT = 8080;
   server.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Server running on https://system-backend.zeabur.app`);
   });
 }
 

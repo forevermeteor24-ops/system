@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import axios from "axios";
 import OrderModel from "../models/orderModel";
 import User from "../models/userModel";
+import ProductModel from "../models/productModel";
 import { startTrack } from "../ws";
 /**
  * 创建订单
@@ -16,24 +17,25 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       title,
-      address, // 前端传来的是对象：{ detail: "xxx", lng:..., lat:... }
+      address,  // 前端传来的是对象：{ detail: "xxx", lng:..., lat:... }
       price,
+      productId,  // 用户选择的商品ID
       merchantId: bodyMerchantId,
       userId: bodyUserId,
     } = req.body;
 
-    // 🔍 调试：看看到底传了什么进来
-    console.log("CreateOrder Recieved:", { title, price, address });
+    // 🔍 调试：查看传入的数据
+    console.log("CreateOrder Received:", { title, price, address, productId });
 
-    // 校验修改：防止 address 是 null 导致的报错
-    if (!title || !address || price == null) {
-      return res.status(400).json({ error: "缺少 title、address 或 price" });
+    // 校验必填字段
+    if (!title || !address || price == null || !productId) {
+      return res.status(400).json({ error: "缺少 title、address、price 或 productId" });
     }
 
     if (typeof price !== "number" || price <= 0)
       return res.status(400).json({ error: "price 必须是正数" });
 
-    const actor = (req as any).user; // 加上类型断言防止爆红
+    const actor = (req as any).user; // 获取当前用户
     if (!actor) return res.status(401).json({ error: "未登录" });
 
     let merchantId: string | undefined;
@@ -56,28 +58,36 @@ export async function createOrder(req: Request, res: Response) {
       return res.status(403).json({ error: "无权限创建订单" });
     }
 
-    // 修复：不要手动传入 createdAt 和 updatedAt 字段
+    // 查找商品，确保商品属于当前商家
+    const product = await ProductModel.findById(productId);
+    if (!product) {
+      return res.status(404).json({ error: "商品不存在" });
+    }
+    if (product.merchantId.toString() !== merchantId) {
+      return res.status(403).json({ error: "无法为此商品创建订单，商品不属于该商家" });
+    }
+
+    // 创建订单
     const order = await OrderModel.create({
       title,
-      price,
+      price: product.price,  // 使用商品的价格
       address: {
-        detail: typeof address === 'object' ? address.detail : address,
+        detail: address.detail,
         lng: address.lng || null,
         lat: address.lat || null,
       },
       status: "待发货",
       merchantId,
       userId,
-      // 不要传入 createdAt 和 updatedAt 字段，Mongoose 会自动处理
+      productId,  // 记录商品ID
     });
 
-    return res.json(order);
+    return res.status(201).json(order);
   } catch (err: any) {
     console.error("createOrder error:", err);
-    // 返回具体错误信息，方便调试
-    return res.status(500).json({ 
-      error: "创建订单失败", 
-      detail: err.message 
+    return res.status(500).json({
+      error: "创建订单失败",
+      detail: err.message,
     });
   }
 }

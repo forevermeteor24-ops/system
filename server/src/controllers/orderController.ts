@@ -56,37 +56,32 @@ export async function createOrder(req: Request, res: Response) {
       return res.status(403).json({ error: "无权限创建订单" });
     }
 
-    /** 创建订单 */
+    // 修复：不要手动传入 createdAt 和 updatedAt 字段
     const order = await OrderModel.create({
       title,
       price,
-      
-      // ✅✅✅ 这里是修复的核心点！
-      // 不要写 detail: address，而要拆包
       address: {
-        // 如果前端传的是对象，取它的 detail；如果传的是字符串，直接用
         detail: typeof address === 'object' ? address.detail : address,
-        
-        // 读取前端传来的经纬度，而不是写死 null（万一以后有坐标呢）
         lng: address.lng || null,
         lat: address.lat || null,
       },
-
       status: "待发货",
       merchantId,
       userId,
+      // 不要传入 createdAt 和 updatedAt 字段，Mongoose 会自动处理
     });
 
     return res.json(order);
   } catch (err: any) {
     console.error("createOrder error:", err);
-    // 把具体错误信息返回给前端，方便 F12 查看
+    // 返回具体错误信息，方便调试
     return res.status(500).json({ 
       error: "创建订单失败", 
       detail: err.message 
     });
   }
 }
+
 
 
 /** 获取订单列表（支持排序） */
@@ -164,7 +159,7 @@ export async function shipOrder(req: Request, res: Response) {
     if (order.merchantId.toString() !== actor.userId)
       return res.status(403).json({ error: "不能发货其他商家的订单" });
 
-    // 4. 查商家（获取发货起点）
+    // 3. 查商家地址
     const merchant = await User.findById(order.merchantId);
     if (!merchant) return res.status(404).json({ error: "商家账户不存在" });
 
@@ -176,14 +171,14 @@ export async function shipOrder(req: Request, res: Response) {
 
     console.log(`[ShipDebug] 地址解析: 店铺=[${shopAddrDetail}] -> 用户=[${userAddrDetail}]`);
 
-    // 5. 路线规划 (这一步最容易挂，通常是因为没配 API Key)
+    // 4. 路线规划
     let origin, dest;
     try {
-        origin = await geocodeAddress(shopAddrDetail);
-        dest = await geocodeAddress(userAddrDetail);
+      origin = await geocodeAddress(shopAddrDetail);
+      dest = await geocodeAddress(userAddrDetail);
     } catch (geoError: any) {
-        console.error("Geocode Error:", geoError);
-        return res.status(500).json({ error: "地址解析失败，请检查地图API Key配置", detail: geoError.message });
+      console.error("Geocode Error:", geoError);
+      return res.status(500).json({ error: "地址解析失败，请检查地图API Key配置", detail: geoError.message });
     }
 
     const route = await planRoute(origin, dest);
@@ -198,7 +193,7 @@ export async function shipOrder(req: Request, res: Response) {
     order.address.lat = dest.lat;
     await order.save();
 
-    // 6. 启动模拟 & 保存状态
+    // 5. 启动模拟 & 保存状态
     startTrack(orderId, points);
 
     order.status = "配送中";
@@ -210,13 +205,12 @@ export async function shipOrder(req: Request, res: Response) {
   } catch (err: any) {
     console.error("shipOrder Fatal Error:", err);
     return res.status(500).json({ 
-        error: "发货逻辑崩溃", 
-        detail: err.message,
-        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      error: "发货逻辑崩溃", 
+      detail: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 }
-
 
 
 /** 更新订单状态 */
@@ -345,6 +339,7 @@ export async function planRoute(origin: any, dest: any) {
   return data.route;
 }
 
+
 export function parseRouteToPoints(route: any) {
   const pts: any[] = [];
   const steps = route?.paths?.[0]?.steps ?? [];
@@ -368,29 +363,47 @@ export async function getRoute(req: Request, res: Response) {
   try {
     const orderId = req.query.id as string;
     console.log(`请求的订单 ID：${orderId}`);
-    if (!orderId) return res.status(400).json({ error: "缺少订单 id" });
+    if (!orderId) {
+      console.error("缺少订单 ID");
+      return res.status(400).json({ error: "缺少订单 id" });
+    }
 
     const actor = req.user;
-    if (!actor) return res.status(401).json({ error: "未登录" });
+    if (!actor) {
+      console.error("未登录用户尝试请求路线");
+      return res.status(401).json({ error: "未登录" });
+    }
 
     const order = await OrderModel.findById(orderId);
-    if (!order) return res.status(404).json({ error: "Order not found" });
+    if (!order) {
+      console.error(`订单未找到：${orderId}`);
+      return res.status(404).json({ error: "Order not found" });
+    }
 
     console.log(`订单信息：`, order);
 
-    if (actor.role === "user" && String(order.userId) !== actor.userId)
+    if (actor.role === "user" && String(order.userId) !== actor.userId) {
+      console.error(`用户 ${actor.userId} 无权限访问此订单`);
       return res.status(403).json({ error: "无权限" });
+    }
 
-    if (actor.role === "merchant" && String(order.merchantId) !== actor.userId)
+    if (actor.role === "merchant" && String(order.merchantId) !== actor.userId) {
+      console.error(`商家 ${actor.userId} 无权限访问此订单`);
       return res.status(403).json({ error: "无权限" });
+    }
 
     const merchant = await User.findById(order.merchantId);
-    if (!merchant) return res.status(404).json({ error: "商家不存在" });
+    if (!merchant) {
+      console.error(`商家不存在：${order.merchantId}`);
+      return res.status(404).json({ error: "商家不存在" });
+    }
 
     console.log(`商家信息：`, merchant);
 
-    if (!merchant.address?.detail)
+    if (!merchant.address?.detail) {
+      console.error("商家未填写地址");
       return res.status(400).json({ error: "商家未填写地址" });
+    }
 
     const shopAddress = merchant.address.detail;
     const customerAddress = order.address.detail;
@@ -401,10 +414,13 @@ export async function getRoute(req: Request, res: Response) {
     // 解析商家和用户地址
     let origin, dest;
     try {
+      console.log(`开始解析商家地址：${shopAddress}`);
       origin = await geocodeAddress(shopAddress);
+      console.log(`商家地址解析成功，商家经纬度：`, origin);
+
+      console.log(`开始解析用户地址：${customerAddress}`);
       dest = await geocodeAddress(customerAddress);
-      console.log(`商家经纬度：`, origin);
-      console.log(`用户经纬度：`, dest);
+      console.log(`用户地址解析成功，用户经纬度：`, dest);
     } catch (geoError: any) {
       console.error("地址解析失败：", geoError);
       return res.status(500).json({ error: "地址解析失败，请检查地图API Key配置", detail: geoError.message });
@@ -413,6 +429,7 @@ export async function getRoute(req: Request, res: Response) {
     // 规划路线
     let route;
     try {
+      console.log(`开始规划路线：`, { origin, dest });
       route = await planRoute(origin, dest);
       console.log("路径规划成功：", route);
     } catch (routeError: any) {
@@ -425,11 +442,13 @@ export async function getRoute(req: Request, res: Response) {
 
     // 将商家和用户的经纬度保存到数据库
     try {
+      console.log("开始更新商家地址...");
       merchant.address.lng = origin.lng;
       merchant.address.lat = origin.lat;
       await merchant.save();
       console.log("商家地址更新并保存成功：", merchant.address);
 
+      console.log("开始更新用户地址...");
       order.address.lng = dest.lng;
       order.address.lat = dest.lat;
       await order.save();
@@ -447,7 +466,7 @@ export async function getRoute(req: Request, res: Response) {
       points,
     });
   } catch (err: any) {
-    console.error("getRoute error:", err);
+    console.error("getRoute 错误：", err);
     return res.status(500).json({ error: err.message || "路线规划失败" });
   }
 }

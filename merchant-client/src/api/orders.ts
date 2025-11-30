@@ -1,6 +1,7 @@
 /* ===========================================
    类型定义（完全匹配你的后端）
 =========================================== */
+import axios from 'axios';
 
 export interface Address {
   detail: string;
@@ -135,21 +136,19 @@ export async function deleteOrder(id: string) {
 =========================== */
 export async function requestRoute(orderId: string) {
   try {
-    const res = await fetch(`${BASE}/route`, {
-      method: "POST",
-      headers: authHeader(),
-      body: JSON.stringify({ orderId }),
-    });
-
-    if (!res.ok) {
-      throw new Error("请求路线失败");
-    }
-
-    return res.json();
-  } catch (error: any) {
-    alert("错误详情: " + error.message); // 捕获并显示错误信息
+    const url = `/api/orders/route?id=${orderId}`;
+    console.log("发送路径规划请求：", url);  // 添加调试日志，查看请求 URL
+    const response = await axios.get(url);
+    
+    console.log("路径规划响应：", response.data);  // 输出响应内容，检查返回的数据
+    
+    return response.data;
+  } catch (err) {
+    console.error("路径规划请求失败：", err);
+    throw new Error("路径规划失败");
   }
 }
+
 
 
 /* ===========================

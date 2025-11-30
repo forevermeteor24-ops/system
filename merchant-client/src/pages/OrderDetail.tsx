@@ -30,19 +30,23 @@ export default function OrderDetail() {
   useEffect(() => {
     if (!id) return;
     let mounted = true;
-
+  
     (async () => {
+      console.log("Fetching order data...");
       const o = await fetchOrder(id);
       if (!mounted) return;
       setOrder(o);
-
+  
+      // 调试：查看订单信息
+      console.log("订单信息：", o);
+  
       /* 等待 mapRef 渲染 */
       await new Promise<void>((resolve) => {
         const wait = () =>
           mapRef.current ? resolve() : requestAnimationFrame(wait);
         wait();
       });
-
+  
       /* 初始化空地图（后续再设中心） */
       const map =
         mapInstanceRef.current ||
@@ -50,63 +54,69 @@ export default function OrderDetail() {
           zoom: 14,
           center: [116.397428, 39.90923], // 临时中心点
         });
-
+  
       mapInstanceRef.current = map;
-
+  
       /* 请求后端路线：后端会根据商家 id 自动查商家地址 */
       const r = await requestRoute(o._id);
-
+  
       console.log("路径规划响应数据：", r);  // 添加调试信息
-
+  
       if (r?.points?.length > 0) {
+        console.log("路线规划成功，路径点数量：", r.points.length);
         setRoutePoints(r.points);
         setRouteLoaded(true);
-
+  
         /** ⭐ 使用后端返回的商家坐标作为中心点，正确无误 */
         const centerLng = r.origin.lng;
         const centerLat = r.origin.lat;
-
+  
+        console.log(`地图中心点设置为：lng=${centerLng}, lat=${centerLat}`);
         map.setCenter([centerLng, centerLat]);
-
+  
         const path = r.points.map(
           (p: any) => new AMap.LngLat(p.lng, p.lat)
         );
-
+  
         const polyline = new AMap.Polyline({
           path,
           strokeWeight: 5,
           showDir: true,
         });
-
+  
         map.add(polyline);
-
+  
         if (!fitViewDone) {
           try {
             map.setFitView([polyline]);
-          } catch {}
+            console.log("地图自动调整视图以适应路径");
+          } catch (e) {
+            console.error("地图视图调整失败", e);
+          }
           setFitViewDone(true);
         }
-
+  
         /** 车辆 marker：起点 */
         const marker = new AMap.Marker({
           position: path[0],
           icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png",
           offset: new AMap.Pixel(-13, -30),
         });
-
+  
         map.add(marker);
         markerRef.current = marker;
+        console.log("添加起点标记：", path[0]);
       } else {
         console.error("路径规划数据无效");  // 如果没有路径数据
         alert("路径规划失败，请检查数据！");
       }
     })();
-
+  
     return () => {
       mounted = false;
     };
   }, [id]);
-
+  
   /* ------------------------------------------------------
      WebSocket：只在配送中时启动
   ------------------------------------------------------ */
@@ -115,15 +125,19 @@ export default function OrderDetail() {
     if (order.status !== "配送中") return;
     if (!routeLoaded) return;
 
+    console.log("订单状态为“配送中”，启动 WebSocket 连接");
+
     const ws = new WebSocket("wss://system-backend.zeabur.app");
     wsRef.current = ws;
 
     ws.onopen = () => {
+      console.log("WebSocket 连接已打开");
       ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
       ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
     };
 
     ws.onmessage = (ev) => {
+      console.log("接收到 WebSocket 消息：", ev.data);
       let msg;
       try {
         msg = JSON.parse(ev.data);
@@ -134,6 +148,7 @@ export default function OrderDetail() {
 
       /* 实时位置 */
       if (msg.type === "location" && msg.position) {
+        console.log("实时位置更新：", msg.position);
         markerRef.current?.setPosition(
           new AMap.LngLat(msg.position.lng, msg.position.lat)
         );
@@ -142,6 +157,7 @@ export default function OrderDetail() {
 
       /* 刷新恢复轨迹 */
       if (msg.type === "current-state") {
+        console.log("当前轨迹状态：", msg);
         if (msg.position && markerRef.current) {
           markerRef.current.setPosition(
             new AMap.LngLat(msg.position.lng, msg.position.lat)
@@ -149,6 +165,7 @@ export default function OrderDetail() {
         }
 
         if (msg.index < msg.total - 1) {
+          console.log("轨迹尚未播放完，继续播放");
           ws.send(
             JSON.stringify({
               type: "start-track",
@@ -162,6 +179,7 @@ export default function OrderDetail() {
 
       /* 没有轨迹 → 重新启动 */
       if (msg.type === "no-track") {
+        console.log("未找到轨迹数据，重新启动播放");
         ws.send(
           JSON.stringify({
             type: "start-track",
@@ -178,7 +196,9 @@ export default function OrderDetail() {
   /* 商家发货 */
   async function handleShip() {
     try {
+      console.log("请求发货...");
       const updated = await shipOrder(order._id);
+      console.log("发货请求成功，更新后的订单：", updated);
       setOrder(updated);
       alert("🚚 已发货，车辆开始配送！");
     } catch (err: unknown) {
@@ -191,7 +211,6 @@ export default function OrderDetail() {
         alert("发货失败：未知错误");
       }
     }
-    
   }
 
   /* 商家取消 */

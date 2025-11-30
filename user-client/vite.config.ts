@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "essex-assigned-coordination-jewel.trycloudflare.com"
+      "mandatory-issues-roof-settings.trycloudflare.com"
     ],
   },
 });

@@ -167,9 +167,7 @@ export async function shipOrder(req: Request, res: Response) {
     // 4. 查商家（获取发货起点）
     const merchant = await User.findById(order.merchantId);
     if (!merchant) return res.status(404).json({ error: "商家账户不存在" });
-    
-    // ⚠️ 关键修正：确保 merchant.address 真的有数据
-    // 注意：之前我们的 User 模型 address 可能允许了 null，这里要做防空处理
+
     const shopAddrDetail = typeof merchant.address === 'object' ? merchant.address?.detail : merchant.address;
     if (!shopAddrDetail) return res.status(400).json({ error: "商家未设置店铺地址，无法规划路线" });
 
@@ -191,6 +189,15 @@ export async function shipOrder(req: Request, res: Response) {
     const route = await planRoute(origin, dest);
     const points = parseRouteToPoints(route);
 
+    // 将商家和用户的经纬度保存到数据库
+    merchant.address.lng = origin.lng;
+    merchant.address.lat = origin.lat;
+    await merchant.save();
+
+    order.address.lng = dest.lng;
+    order.address.lat = dest.lat;
+    await order.save();
+
     // 6. 启动模拟 & 保存状态
     startTrack(orderId, points);
 
@@ -202,7 +209,6 @@ export async function shipOrder(req: Request, res: Response) {
 
   } catch (err: any) {
     console.error("shipOrder Fatal Error:", err);
-    // 🔥 把真实错误给前端，这样你看F12就知道是不是 Key 没配了
     return res.status(500).json({ 
         error: "发货逻辑崩溃", 
         detail: err.message,
@@ -210,6 +216,7 @@ export async function shipOrder(req: Request, res: Response) {
     });
   }
 }
+
 
 
 /** 更新订单状态 */
@@ -381,13 +388,24 @@ export async function getRoute(req: Request, res: Response) {
       return res.status(400).json({ error: "商家未填写地址" });
 
     const shopAddress = merchant.address.detail;
-    const customerAddress = order.address.detail; // ⭐ 地址结构改了这里必须改
+    const customerAddress = order.address.detail;
 
+    // 解析商家和用户地址
     const origin = await geocodeAddress(shopAddress);
     const dest = await geocodeAddress(customerAddress);
 
+    // 规划路线
     const route = await planRoute(origin, dest);
     const points = parseRouteToPoints(route);
+
+    // 将商家和用户的经纬度保存到数据库
+    merchant.address.lng = origin.lng;
+    merchant.address.lat = origin.lat;
+    await merchant.save();
+
+    order.address.lng = dest.lng;
+    order.address.lat = dest.lat;
+    await order.save();
 
     return res.json({
       shopAddress,

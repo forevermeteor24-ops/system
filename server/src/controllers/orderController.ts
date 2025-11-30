@@ -360,7 +360,7 @@ export function parseRouteToPoints(route: any) {
  * 用户地址 → order.address.detail
  */
 export async function getRoute(req: Request, res: Response) {
-  console.log('Route triggered')
+  console.log('Route triggered');  // 确认是否进入了这个函数
   try {
     const orderId = req.query.id as string;
     console.log(`请求的订单 ID：${orderId}`);
@@ -369,7 +369,7 @@ export async function getRoute(req: Request, res: Response) {
       return res.status(400).json({ error: "缺少订单 id" });
     }
 
-    const actor = req.user;
+    const actor = req.user;  // 获取用户信息
     if (!actor) {
       console.error("未登录用户尝试请求路线");
       return res.status(401).json({ error: "未登录" });
@@ -383,6 +383,7 @@ export async function getRoute(req: Request, res: Response) {
 
     console.log(`订单信息：`, order);
 
+    // 验证是否为当前用户或商家的订单
     if (actor.role === "user" && String(order.userId) !== actor.userId) {
       console.error(`用户 ${actor.userId} 无权限访问此订单`);
       return res.status(403).json({ error: "无权限" });

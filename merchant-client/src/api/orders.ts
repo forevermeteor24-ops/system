@@ -136,18 +136,31 @@ export async function deleteOrder(id: string) {
 =========================== */
 export async function requestRoute(orderId: string) {
   try {
-    const url = `${BASE}/route`;  // 使用 POST 请求
-    console.log("发送路径规划请求：", url);  // 添加调试日志，查看请求 URL
-    const response = await axios.post(url, { id: orderId });  // 发送 POST 请求，并传递 orderId
+    const url = `${BASE}/route?id=${orderId}`;  // 完整的 API 地址
+    console.log("发送路径规划请求：", url);
 
+    const token = localStorage.getItem("token");  // 获取存储的 token
+    if (!token) {
+      console.error("没有授权 Token，无法发送请求");
+      throw new Error("没有授权 Token");
+    }
+
+    const response = await axios.get(url, {
+      headers: {
+        "Authorization": `Bearer ${token}`,  // 将 Token 传递给请求头
+        "Content-Type": "application/json",
+      }
+    });
+    
     console.log("路径规划响应：", response.data);  // 输出响应内容，检查返回的数据
-
+    
     return response.data;
   } catch (err) {
     console.error("路径规划请求失败：", err);
     throw new Error("路径规划失败");
   }
 }
+
 
 
 

@@ -22,7 +22,7 @@ router.post("/", auth(["user"]), createOrder);
    2. 用户 / 商家 查看订单
 ------------------------------ */
 router.get("/", auth(["merchant", "user"]), getOrders);
-router.post("/route", auth(["merchant", "user"]), getRoute);  // 修改为 POST 请求
+router.get("/route", auth(["merchant", "user"]), getRoute);  // 修改为 POST 请求
 router.get("/:id", auth(["merchant", "user"]), getOrder);
 
 /* -----------------------------

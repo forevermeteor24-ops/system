@@ -360,6 +360,7 @@ export function parseRouteToPoints(route: any) {
  * 用户地址 → order.address.detail
  */
 export async function getRoute(req: Request, res: Response) {
+  console.log('Route triggered')
   try {
     const orderId = req.query.id as string;
     console.log(`请求的订单 ID：${orderId}`);

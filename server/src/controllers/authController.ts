@@ -2,12 +2,11 @@ import { Request, Response } from "express";
 import User from "../models/userModel";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-
+import { geocodeAddress } from "./orderController"
 export const register = async (req: Request, res: Response) => {
   try {
     let { username, password, role, address } = req.body;
 
-    // 检查必填
     if (!username || !password || !role) {
       return res.status(400).json({ error: "缺少 username / password / role" });
     }
@@ -16,7 +15,7 @@ export const register = async (req: Request, res: Response) => {
     const exist = await User.findOne({ username });
     if (exist) return res.status(400).json({ error: "用户名已存在" });
 
-    // ⭐ address 可能是字符串，需要格式化
+    // address 可能是字符串
     if (typeof address === "string") {
       address = {
         detail: address,
@@ -25,10 +24,22 @@ export const register = async (req: Request, res: Response) => {
       };
     }
 
-    // 如果是商家，必须有地址 detail（否则发货无法解析）
-    if (role === "merchant") {
-      if (!address?.detail) {
-        return res.status(400).json({ error: "商家必须填写地址" });
+    // 商家必须有地址 detail
+    if (role === "merchant" && !address?.detail) {
+      return res.status(400).json({ error: "商家必须填写地址" });
+    }
+
+    // ⭐ 在这里解析地址 → 得到经纬度
+    if (address?.detail) {
+      try {
+        const geo = await geocodeAddress(address.detail);
+        address.lng = geo.lng;
+        address.lat = geo.lat;
+      } catch (err) {
+        console.error("Geocode failed:", err);
+        return res.status(500).json({
+          error: "地址解析失败，请检查地址是否有效或地图 API KEY 配置"
+        });
       }
     }
 
@@ -40,7 +51,7 @@ export const register = async (req: Request, res: Response) => {
       username,
       password: hashed,
       role,
-      address, // ⭐ 现在一定是 {detail, lng, lat}
+      address,   // ⭐ 现在已经包含 detail + lng + lat
     });
 
     res.json({ message: "注册成功" });
@@ -49,6 +60,7 @@ export const register = async (req: Request, res: Response) => {
     res.status(500).json({ error: "注册失败" });
   }
 };
+
 
 export const login = async (req: Request, res: Response) => {
   try {

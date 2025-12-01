@@ -2,12 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   fetchOrder,
-  requestRoute,
   shipOrder,
   updateStatus,
   deleteOrder,
 } from "../api/orders";
-import { formatRemainingETA } from "../utils/formatETA"
+import { formatRemainingETA } from "../utils/formatETA";
 
 declare const AMap: any;
 
@@ -16,9 +15,6 @@ export default function OrderDetail() {
   const navigate = useNavigate();
 
   const [order, setOrder] = useState<any>(null);
-  const [routePoints, setRoutePoints] = useState<any[]>([]);
-  const [routeLoaded, setRouteLoaded] = useState(false);
-  const [fitViewDone, setFitViewDone] = useState(false);
   const [etaText, setEtaText] = useState("--");
 
   const mapRef = useRef<HTMLDivElement | null>(null);
@@ -29,6 +25,7 @@ export default function OrderDetail() {
   /* ------------------------ 获取订单 & 初始化地图 ------------------------ */
   useEffect(() => {
     if (!id) return;
+
     let mounted = true;
 
     (async () => {
@@ -36,10 +33,9 @@ export default function OrderDetail() {
       if (!mounted) return;
       setOrder(o);
 
-      // 初始化剩余时间
-      if (o.eta) setEtaText(formatRemainingETA(o.eta));
+      if (o.expectedArrival) setEtaText(formatRemainingETA(o.expectedArrival));
 
-      // 等待 mapRef 渲染
+      // 地图准备好
       await new Promise<void>((resolve) => {
         const wait = () => (mapRef.current ? resolve() : requestAnimationFrame(wait));
         wait();
@@ -47,30 +43,25 @@ export default function OrderDetail() {
 
       const map =
         mapInstanceRef.current ||
-        new AMap.Map(mapRef.current!, {
-          zoom: 14,
-          center: [116.397428, 39.90923],
-        });
+        new AMap.Map(mapRef.current!, { zoom: 14 });
       mapInstanceRef.current = map;
 
-      const r = await requestRoute(o._id);
-      if (r?.points?.length > 0) {
-        setRoutePoints(r.points);
-        setRouteLoaded(true);
+      // ---- 不再请求后端路线，直接使用 o.routePoints ----
+      if (o.routePoints?.length > 0) {
+        const path = o.routePoints.map(
+          (p: any) => new AMap.LngLat(p.lng, p.lat)
+        );
 
-        const centerLng = r.origin.lng;
-        const centerLat = r.origin.lat;
-        map.setCenter([centerLng, centerLat]);
-
-        const path = r.points.map((p: any) => new AMap.LngLat(p.lng, p.lat));
-        const polyline = new AMap.Polyline({ path, strokeWeight: 5, showDir: true });
+        const polyline = new AMap.Polyline({
+          path,
+          strokeWeight: 5,
+          showDir: true,
+        });
         map.add(polyline);
 
-        if (!fitViewDone) {
-          map.setFitView([polyline]);
-          setFitViewDone(true);
-        }
+        map.setFitView([polyline]);
 
+        // 初始化骑手/小车 marker
         const marker = new AMap.Marker({
           position: path[0],
           icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png",
@@ -88,7 +79,7 @@ export default function OrderDetail() {
 
   /* ------------------------ WebSocket：配送中 ------------------------ */
   useEffect(() => {
-    if (!order || order.status !== "配送中" || !routeLoaded) return;
+    if (!order || order.status !== "配送中") return;
 
     const ws = new WebSocket("wss://system-backend.zeabur.app");
     wsRef.current = ws;
@@ -107,31 +98,22 @@ export default function OrderDetail() {
       }
 
       if (msg.type === "location" && msg.position) {
-        markerRef.current?.setPosition(new AMap.LngLat(msg.position.lng, msg.position.lat));
-      }
-
-      if (msg.type === "current-state" && msg.position) {
-        markerRef.current?.setPosition(new AMap.LngLat(msg.position.lng, msg.position.lat));
-        if (msg.index < msg.total - 1) {
-          ws.send(JSON.stringify({ type: "start-track", orderId: order._id, points: routePoints }));
-        }
-      }
-
-      if (msg.type === "no-track") {
-        ws.send(JSON.stringify({ type: "start-track", orderId: order._id, points: routePoints }));
+        markerRef.current?.setPosition(
+          new AMap.LngLat(msg.position.lng, msg.position.lat)
+        );
       }
     };
 
     return () => ws.close();
-  }, [order?.status, routeLoaded, routePoints]);
+  }, [order?.status]);
 
-  /* ------------------------ 剩余时间刷新（每分钟一次） ------------------------ */
+  /* ------------------------ ETA 刷新 ------------------------ */
   useEffect(() => {
     if (!order?.expectedArrival) return;
-
-    const updateETA = () => setEtaText(formatRemainingETA(order.expectedArrival));
+    const updateETA = () =>
+      setEtaText(formatRemainingETA(order.expectedArrival));
     updateETA();
-    const timer = setInterval(updateETA, 60 * 1000); // 每分钟刷新
+    const timer = setInterval(updateETA, 60000);
     return () => clearInterval(timer);
   }, [order?.expectedArrival]);
 
@@ -140,7 +122,7 @@ export default function OrderDetail() {
     try {
       const updated = await shipOrder(order._id);
       setOrder(updated);
-      alert("🚚 已发货，车辆开始配送！");
+      alert("🚚 已发货！");
     } catch {
       alert("发货失败");
     }
@@ -159,13 +141,6 @@ export default function OrderDetail() {
     navigate("/orders");
   }
 
-  /* ------------------------ 计算订单总价 ------------------------ */
-  const calculateTotal = () => {
-    if (!order?.items) return order?.price || 0;
-    return order.items.reduce((sum: number, item: any) => sum + item.price * item.quantity, 0);
-  };
-
-  /* ------------------------ 渲染 ------------------------ */
   return (
     <div>
       <h2>订单详情</h2>
@@ -176,32 +151,33 @@ export default function OrderDetail() {
         <>
           <p><b>ID：</b>{order._id}</p>
           <p><b>商品：</b>{order.title}</p>
+          <p><b>地址：</b>{order.address.detail}</p>
+          <p><b>状态：</b>{order.status}</p>
 
-          {order.items && (
-            <div>
-              <b>商品列表：</b>
-              <ul>
-                {order.items.map((item: any, idx: number) => (
-                  <li key={idx}>
-                    {item.name} × {item.quantity} = ¥{item.price * item.quantity}
-                  </li>
-                ))}
-              </ul>
-              <p><b>总价：</b>¥{calculateTotal()}</p>
-            </div>
+          {order.expectedArrival && (
+            <p>
+              <b>预计送达：</b>{etaText}
+            </p>
           )}
 
-          <p><b>客户地址：</b>{order.address.detail}</p>
-          <p><b>状态：</b>{order.status}</p>
-          {order.expectedArrival && <p><b>预计送达剩余时间：</b>{etaText}</p>}
-
-          {order.status === "待发货" && <button onClick={handleShip}>发货</button>}
-          {order.status === "用户申请退货" && <button onClick={handleCancel}>取消订单</button>}
-          {(order.status === "已完成" || order.status === "商家已取消") && <button onClick={handleDelete}>删除订单</button>}
+          {order.status === "待发货" && (
+            <button onClick={handleShip}>发货</button>
+          )}
+          {order.status === "用户申请退货" && (
+            <button onClick={handleCancel}>取消订单</button>
+          )}
+          {(order.status === "已完成" || order.status === "商家已取消") && (
+            <button onClick={handleDelete}>删除订单</button>
+          )}
 
           <div
             ref={mapRef}
-            style={{ height: 420, marginTop: 16, borderRadius: 8, border: "1px solid #eee" }}
+            style={{
+              height: 420,
+              marginTop: 16,
+              borderRadius: 8,
+              border: "1px solid #eee",
+            }}
           />
         </>
       )}

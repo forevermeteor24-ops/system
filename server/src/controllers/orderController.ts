@@ -165,44 +165,60 @@ export async function shipOrder(req: Request, res: Response) {
     if (!order) return res.status(404).json({ error: "订单不存在" });
 
     // 2. 权限校验
-    if (order.merchantId.toString() !== actor.userId)
+    if (order.merchantId.toString() !== actor.userId) {
       return res.status(403).json({ error: "不能发货其他商家的订单" });
+    }
 
     // 3. 查商家地址
     const merchant = await User.findById(order.merchantId);
     if (!merchant) return res.status(404).json({ error: "商家账户不存在" });
 
-    const shopAddrDetail = typeof merchant.address === 'object' ? merchant.address?.detail : merchant.address;
-    if (!shopAddrDetail) return res.status(400).json({ error: "商家未设置店铺地址，无法规划路线" });
-
-    const userAddrDetail = typeof order.address === 'object' ? order.address?.detail : order.address;
-    if (!userAddrDetail) return res.status(400).json({ error: "用户收货地址无效" });
-
-    console.log(`[ShipDebug] 地址解析: 店铺=[${shopAddrDetail}] -> 用户=[${userAddrDetail}]`);
-
-    // 4. 路线规划
-    let origin, dest;
-    try {
-      origin = await geocodeAddress(shopAddrDetail);
-      dest = await geocodeAddress(userAddrDetail);
-    } catch (geoError: any) {
-      console.error("Geocode Error:", geoError);
-      return res.status(500).json({ error: "地址解析失败，请检查地图API Key配置", detail: geoError.message });
+    // 商家地址
+    const shopAddress = merchant.address;
+    if (!shopAddress?.detail) {
+      return res.status(400).json({ error: "商家未设置店铺地址" });
     }
 
+    // 用户地址
+    const userAddress = order.address;
+    if (!userAddress?.detail) {
+      return res.status(400).json({ error: "用户收货地址无效" });
+    }
+
+    console.log(`[ShipDebug] 原始地址: 商家=[${shopAddress.detail}] 用户=[${userAddress.detail}]`);
+
+    // 4. 获取经纬度（优先用数据库）
+    let origin = { lng: shopAddress.lng, lat: shopAddress.lat };
+    let dest = { lng: userAddress.lng, lat: userAddress.lat };
+
+    // 如果没有经纬度，才调用 geocode
+    if (!origin.lng || !origin.lat) {
+      console.log("[ShipDebug] 商家经纬度缺失 -> 调用 geocode");
+      const geo = await geocodeAddress(shopAddress.detail);
+      origin = geo;
+
+      merchant.address.lng = geo.lng;
+      merchant.address.lat = geo.lat;
+      await merchant.save();
+    }
+
+    if (!dest.lng || !dest.lat) {
+      console.log("[ShipDebug] 用户经纬度缺失 -> 调用 geocode");
+      const geo = await geocodeAddress(userAddress.detail);
+      dest = geo;
+
+      order.address.lng = geo.lng;
+      order.address.lat = geo.lat;
+      await order.save();
+    }
+
+    console.log("[ShipDebug] 使用经纬度:", { origin, dest });
+
+    // 5. 路线规划
     const route = await planRoute(origin, dest);
     const points = parseRouteToPoints(route);
 
-    // 将商家和用户的经纬度保存到数据库
-    merchant.address.lng = origin.lng;
-    merchant.address.lat = origin.lat;
-    await merchant.save();
-
-    order.address.lng = dest.lng;
-    order.address.lat = dest.lat;
-    await order.save();
-
-    // 5. 启动模拟 & 保存状态
+    // 6. 启动模拟
     startTrack(orderId, points);
 
     order.status = "配送中";
@@ -213,13 +229,13 @@ export async function shipOrder(req: Request, res: Response) {
 
   } catch (err: any) {
     console.error("shipOrder Fatal Error:", err);
-    return res.status(500).json({ 
-      error: "发货逻辑崩溃", 
-      detail: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    return res.status(500).json({
+      error: "发货失败",
+      detail: err.message
     });
   }
 }
+
 
 
 /** 更新订单状态 */

@@ -3,20 +3,27 @@ import { Request, Response } from "express";
 
 //获取订单热力图数据（经纬度列表）
 export async function getOrderHeatmap(req: Request, res: Response) {
-  try {
-    const orders = await Order.find(
-      { "address.lng": { $exists: true }, "address.lat": { $exists: true } },
-      { "address.lng": 1, "address.lat": 1 }
-    );
-
-    const points = orders.map(o => [o.address.lng, o.address.lat]);
-
-    res.json({ points });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "获取热力图数据失败" });
+    try {
+      const orders = await Order.find(
+        { "address.lng": { $exists: true }, "address.lat": { $exists: true } },
+        { "address.lng": 1, "address.lat": 1 }
+      );
+  
+      const points = orders
+        .filter(o => o.address?.lat && o.address?.lng)
+        .map(o => [
+          o.address.lat,  // 纬度
+          o.address.lng,  // 经度
+          1               // 权重
+        ]);
+  
+      res.json({ points });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "获取热力图数据失败" });
+    }
   }
-}
+  
 
 //获取配送时效（平均配送时长）
 export async function getDeliveryTimeStats(req: Request, res: Response) {

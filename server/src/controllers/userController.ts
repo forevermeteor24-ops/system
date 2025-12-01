@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import User from "../models/userModel";
 import bcrypt from "bcryptjs";
-
+import { geocodeAddress } from "./orderController"
 /** 获取当前用户信息 */
 export async function getProfile(req: Request, res: Response) {
   try {
@@ -36,13 +36,23 @@ export async function updateProfile(req: Request, res: Response) {
       updateData.password = await bcrypt.hash(password, 10);
     }
 
-    // 修改地址
+    // ⭐ 地址修改逻辑
     if (address?.detail) {
-      updateData.address = {
-        detail: address.detail,
-        lng: address.lng ?? null,
-        lat: address.lat ?? null,
-      };
+      // 解析经纬度
+      try {
+        const geo = await geocodeAddress(address.detail);
+
+        updateData.address = {
+          detail: address.detail,
+          lng: geo.lng,
+          lat: geo.lat,
+        };
+      } catch (err) {
+        console.error("Geocode failed:", err);
+        return res.status(500).json({
+          error: "地址解析失败，请检查地址是否有效或地图 API KEY 配置",
+        });
+      }
     }
 
     const user = await User.findByIdAndUpdate(userId, updateData, {
@@ -55,3 +65,4 @@ export async function updateProfile(req: Request, res: Response) {
     return res.status(500).json({ error: "更新失败" });
   }
 }
+

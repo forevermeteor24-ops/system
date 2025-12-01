@@ -12,21 +12,21 @@ export default function MyOrders() {
   const [sort, setSort] = useState("time_desc");
 
   const [showModal, setShowModal] = useState(false);
-  const [merchants, setMerchants] = useState<any[]>([]); 
-  const [products, setProducts] = useState<any[]>([]);  // 存储商家的商品列表
-  const [merchantId, setMerchantId] = useState("");
-  const [productId, setProductId] = useState("");  // 选择的商品ID
-  const [quantity, setQuantity] = useState(1);  // 商品数量
-  const [title, setTitle] = useState("");  // 商品名称
-  const [userAddress, setUserAddress] = useState("");  // 用户地址
+  const [merchants, setMerchants] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [merchantId, setMerchantId] = useState("");  // ⭐ 商家ID（正确）
+  const [productId, setProductId] = useState("");    // 商品ID
+  const [quantity, setQuantity] = useState(1);
+  const [userAddress, setUserAddress] = useState("");
 
-  const navigate = useNavigate();  // 使用 useNavigate
+  const navigate = useNavigate();
 
   // 加载商家列表及用户地址
   const loadCreateOrderData = async () => {
     try {
       const data = await fetchMerchants();
       setMerchants(data);
+
       const u = await http.get("/api/auth/me");
       setUserAddress(u.data.address?.detail || "");
     } catch (err) {
@@ -35,17 +35,16 @@ export default function MyOrders() {
     }
   };
 
-  // 当商家选择变化时，加载该商家的商品列表
+  // ⭐ 当商家选择变化时，加载该商家的商品列表（商家ID正确）
   const handleMerchantChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedMerchantId = e.target.value;
     setMerchantId(selectedMerchantId);
-  
-    console.log("选择的商家ID:", selectedMerchantId);  // 调试信息
-  
-    // 获取该商家的商品列表
+
+    console.log("选择的商家ID:", selectedMerchantId);
+
     try {
-      const productList = await fetchProductsByMerchant(selectedMerchantId);  // 通过商家ID获取商品
-      setProducts(productList);  // 更新商品列表
+      const productList = await fetchProductsByMerchant(selectedMerchantId);
+      setProducts(productList);
     } catch (err) {
       console.error("获取商品列表失败:", err);
       alert("无法加载商品列表");
@@ -63,10 +62,10 @@ export default function MyOrders() {
       const selectedProduct = products.find((product) => product._id === productId);
 
       await http.post("/api/orders", {
-        merchantId,
-        title: selectedProduct?.name,  // 使用商品名称作为订单标题
-        price: selectedProduct?.price,  // 使用商品价格
-        quantity,  // 传递数量
+        merchantId,                      // ⭐ 使用所选商家的ID
+        title: selectedProduct?.name,     // 商品名称
+        price: selectedProduct?.price,    // 商品价格
+        quantity,
         address: { detail: userAddress, lng: null, lat: null },
       });
 
@@ -110,7 +109,7 @@ export default function MyOrders() {
   // 退出登录
   const handleLogout = () => {
     localStorage.removeItem("token");
-    navigate("/login");  // 使用 navigate 跳转到登录页面
+    navigate("/login");
   };
 
   if (loading) return <div>加载中...</div>;
@@ -119,7 +118,6 @@ export default function MyOrders() {
     <div style={{ padding: 24 }}>
       <h2>我的订单</h2>
 
-      {/* 顶部按钮：退出登录 */}
       <button
         onClick={handleLogout}
         style={{
@@ -135,9 +133,8 @@ export default function MyOrders() {
         退出登录
       </button>
 
-      {/* 修改账户信息按钮 */}
       <button
-        onClick={() => navigate("/profile")}  // 导航到个人信息页面
+        onClick={() => navigate("/profile")}
         style={{
           marginBottom: 20,
           padding: "10px 14px",
@@ -151,7 +148,6 @@ export default function MyOrders() {
         修改账户信息
       </button>
 
-      {/* 创建订单按钮 */}
       <button
         onClick={() => {
           loadCreateOrderData();
@@ -170,7 +166,7 @@ export default function MyOrders() {
         创建订单
       </button>
 
-      {/* 排序下拉框 */}
+      {/* 排序 */}
       <div style={{ margin: "12px 0" }}>
         <label>排序方式： </label>
         <select
@@ -198,7 +194,7 @@ export default function MyOrders() {
             <br />
             数量：{o.quantity} 件
             <br />
-            总价：{o.price * o.quantity} 元  {/* 计算总价 */}
+            总价：{o.price * o.quantity} 元
             <br />
             创建时间：{o.createdAt ? new Date(o.createdAt).toLocaleString() : "未知"}
           </div>
@@ -231,6 +227,7 @@ export default function MyOrders() {
           >
             <h3>创建订单</h3>
 
+            {/* 商家选择 */}
             <div style={{ marginTop: 15 }}>
               <label>商家</label>
               <select
@@ -247,6 +244,7 @@ export default function MyOrders() {
               </select>
             </div>
 
+            {/* 商品选择 */}
             <div style={{ marginTop: 15 }}>
               <label>商品名称</label>
               <select
@@ -264,7 +262,7 @@ export default function MyOrders() {
               </select>
             </div>
 
-            {/* 商品数量输入框 */}
+            {/* 数量 */}
             <div style={{ marginTop: 15 }}>
               <label>商品数量</label>
               <input
@@ -276,12 +274,12 @@ export default function MyOrders() {
               />
             </div>
 
+            {/* 地址 */}
             <div style={{ marginTop: 15 }}>
               <label>地址</label>
               <input
                 value={userAddress}
                 readOnly
-                placeholder="正在获取用户地址..."
                 style={{
                   width: "100%",
                   padding: 8,
@@ -291,6 +289,7 @@ export default function MyOrders() {
               />
             </div>
 
+            {/* 提交 */}
             <button
               type="button"
               onClick={createOrder}
@@ -308,6 +307,7 @@ export default function MyOrders() {
               提交
             </button>
 
+            {/* 取消 */}
             <button
               type="button"
               onClick={() => setShowModal(false)}

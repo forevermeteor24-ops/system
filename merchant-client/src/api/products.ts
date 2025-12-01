@@ -3,7 +3,7 @@ import http from './http';  // 假设 http 是封装的 axios 实例
 // 获取商家的所有商品
 export const fetchProductsByMerchant = async (merchantId: string) => {
   // 获取指定商家 ID 的商品列表
-  const response = await http.get(`/api/merchants/${merchantId}/products`);
+  const response = await http.get(`/api/products/${merchantId}/products`);
   return response.data;
 };
 

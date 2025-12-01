@@ -1,53 +1,39 @@
 /* ===========================================
-   类型定义（完全匹配你的后端）
+   类型定义（匹配后端）
 =========================================== */
 import axios from 'axios';
+
 export interface Address {
   detail: string;
   lng: number | null;
   lat: number | null;
 }
 
-/* 用户信息 */
 export interface UserInfo {
   _id: string;
   username: string;
   address: Address;
 }
 
-/* 订单状态（中文） */
 export type OrderStatus =
   | "待发货"
   | "配送中"
   | "已送达"
+  | "已完成"
   | "用户申请退货"
   | "商家已取消";
 
-/* 后端已存在 trackState 字段（保持可选） */
-export interface TrackState {
-  index: number;
-  total: number;
-  lastPosition: {
-    lng: number | null;
-    lat: number | null;
-  };
-}
-
-/* 订单结构 */
 export interface Order {
   _id: string;
   title: string;
-  price: number;
-
+  price: number;          // 单价
+  quantity: number;       // 数量
+  totalPrice: number;     // 总价 = price * quantity
+  eta:number;
   address: Address;
-
-  merchantId: UserInfo;
-  userId: UserInfo;
-
+  merchantId: string;
+  userId: string;
   status: OrderStatus;
-
-  trackState?: TrackState;
-
   createdAt: string;
   updatedAt: string;
 }
@@ -93,9 +79,10 @@ export async function fetchOrder(id: string): Promise<Order> {
 =========================== */
 export async function createOrder(payload: {
   title: string;
-  price: number;
-  address: string; // 用户输入纯文本
+  productId: string;
   merchantId: string;
+  quantity: number; // 新增
+  address: { detail: string; lng?: number; lat?: number };
 }) {
   const res = await fetch(BASE, {
     method: "POST",
@@ -178,11 +165,6 @@ export async function requestRoute(orderId: string) {
     throw new Error("路径规划失败");
   }
 }
-
-
-
-
-
 
 /* ===========================
    8. 获取路线（前端地图使用）

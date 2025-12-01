@@ -7,6 +7,7 @@ import {
   updateStatus,
   deleteOrder,
 } from "../api/orders";
+import { formatRemainingETA } from "../utils/formatETA"
 
 declare const AMap: any;
 
@@ -18,209 +19,139 @@ export default function OrderDetail() {
   const [routePoints, setRoutePoints] = useState<any[]>([]);
   const [routeLoaded, setRouteLoaded] = useState(false);
   const [fitViewDone, setFitViewDone] = useState(false);
+  const [etaText, setEtaText] = useState("--");
 
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  /* ------------------------------------------------------
-     初始化：获取订单 → 初始化地图 → 获取真实路线
-  ------------------------------------------------------ */
+  /* ------------------------ 获取订单 & 初始化地图 ------------------------ */
   useEffect(() => {
     if (!id) return;
     let mounted = true;
-  
+
     (async () => {
-      console.log("Fetching order data...");
       const o = await fetchOrder(id);
       if (!mounted) return;
       setOrder(o);
-  
-      // 调试：查看订单信息
-      console.log("订单信息：", o);
-  
-      /* 等待 mapRef 渲染 */
+
+      // 初始化剩余时间
+      if (o.eta) setEtaText(formatRemainingETA(o.eta));
+
+      // 等待 mapRef 渲染
       await new Promise<void>((resolve) => {
-        const wait = () =>
-          mapRef.current ? resolve() : requestAnimationFrame(wait);
+        const wait = () => (mapRef.current ? resolve() : requestAnimationFrame(wait));
         wait();
       });
-  
-      /* 初始化空地图（后续再设中心） */
+
       const map =
         mapInstanceRef.current ||
         new AMap.Map(mapRef.current!, {
           zoom: 14,
-          center: [116.397428, 39.90923], // 临时中心点
+          center: [116.397428, 39.90923],
         });
-  
       mapInstanceRef.current = map;
-  
-      /* 请求后端路线：后端会根据商家 id 自动查商家地址 */
+
       const r = await requestRoute(o._id);
-  
-      console.log("路径规划响应数据：", r);  // 添加调试信息
-  
       if (r?.points?.length > 0) {
-        console.log("路线规划成功，路径点数量：", r.points.length);
         setRoutePoints(r.points);
         setRouteLoaded(true);
-  
-        /** ⭐ 使用后端返回的商家坐标作为中心点，正确无误 */
+
         const centerLng = r.origin.lng;
         const centerLat = r.origin.lat;
-  
-        console.log(`地图中心点设置为：lng=${centerLng}, lat=${centerLat}`);
         map.setCenter([centerLng, centerLat]);
-  
-        const path = r.points.map(
-          (p: any) => new AMap.LngLat(p.lng, p.lat)
-        );
-  
-        const polyline = new AMap.Polyline({
-          path,
-          strokeWeight: 5,
-          showDir: true,
-        });
-  
+
+        const path = r.points.map((p: any) => new AMap.LngLat(p.lng, p.lat));
+        const polyline = new AMap.Polyline({ path, strokeWeight: 5, showDir: true });
         map.add(polyline);
-  
+
         if (!fitViewDone) {
-          try {
-            map.setFitView([polyline]);
-            console.log("地图自动调整视图以适应路径");
-          } catch (e) {
-            console.error("地图视图调整失败", e);
-          }
+          map.setFitView([polyline]);
           setFitViewDone(true);
         }
-  
-        /** 车辆 marker：起点 */
+
         const marker = new AMap.Marker({
           position: path[0],
           icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png",
           offset: new AMap.Pixel(-13, -30),
         });
-  
         map.add(marker);
         markerRef.current = marker;
-        console.log("添加起点标记：", path[0]);
-      } else {
-        console.error("路径规划数据无效");  // 如果没有路径数据
-        alert("路径规划失败，请检查数据！");
       }
     })();
-  
+
     return () => {
       mounted = false;
     };
   }, [id]);
-  
-  /* ------------------------------------------------------
-     WebSocket：只在配送中时启动
-  ------------------------------------------------------ */
-  useEffect(() => {
-    if (!order) return;
-    if (order.status !== "配送中") return;
-    if (!routeLoaded) return;
 
-    console.log("订单状态为“配送中”，启动 WebSocket 连接");
+  /* ------------------------ WebSocket：配送中 ------------------------ */
+  useEffect(() => {
+    if (!order || order.status !== "配送中" || !routeLoaded) return;
 
     const ws = new WebSocket("wss://system-backend.zeabur.app");
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log("WebSocket 连接已打开");
       ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
       ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
     };
 
     ws.onmessage = (ev) => {
-      console.log("接收到 WebSocket 消息：", ev.data);
       let msg;
       try {
         msg = JSON.parse(ev.data);
-      } catch (e) {
-        console.error("WebSocket 数据解析失败", e);
+      } catch {
         return;
       }
 
-      /* 实时位置 */
       if (msg.type === "location" && msg.position) {
-        console.log("实时位置更新：", msg.position);
-        markerRef.current?.setPosition(
-          new AMap.LngLat(msg.position.lng, msg.position.lat)
-        );
-        return;
+        markerRef.current?.setPosition(new AMap.LngLat(msg.position.lng, msg.position.lat));
       }
 
-      /* 刷新恢复轨迹 */
-      if (msg.type === "current-state") {
-        console.log("当前轨迹状态：", msg);
-        if (msg.position && markerRef.current) {
-          markerRef.current.setPosition(
-            new AMap.LngLat(msg.position.lng, msg.position.lat)
-          );
-        }
-
+      if (msg.type === "current-state" && msg.position) {
+        markerRef.current?.setPosition(new AMap.LngLat(msg.position.lng, msg.position.lat));
         if (msg.index < msg.total - 1) {
-          console.log("轨迹尚未播放完，继续播放");
-          ws.send(
-            JSON.stringify({
-              type: "start-track",
-              orderId: order._id,
-              points: routePoints,
-            })
-          );
+          ws.send(JSON.stringify({ type: "start-track", orderId: order._id, points: routePoints }));
         }
-        return;
       }
 
-      /* 没有轨迹 → 重新启动 */
       if (msg.type === "no-track") {
-        console.log("未找到轨迹数据，重新启动播放");
-        ws.send(
-          JSON.stringify({
-            type: "start-track",
-            orderId: order._id,
-            points: routePoints,
-          })
-        );
+        ws.send(JSON.stringify({ type: "start-track", orderId: order._id, points: routePoints }));
       }
     };
 
     return () => ws.close();
   }, [order?.status, routeLoaded, routePoints]);
 
-  /* 商家发货 */
+  /* ------------------------ 剩余时间刷新（每分钟一次） ------------------------ */
+  useEffect(() => {
+    if (!order?.expectedArrival) return;
+
+    const updateETA = () => setEtaText(formatRemainingETA(order.expectedArrival));
+    updateETA();
+    const timer = setInterval(updateETA, 60 * 1000); // 每分钟刷新
+    return () => clearInterval(timer);
+  }, [order?.expectedArrival]);
+
+  /* ------------------------ 商家操作 ------------------------ */
   async function handleShip() {
     try {
-      console.log("请求发货...");
       const updated = await shipOrder(order._id);
-      console.log("发货请求成功，更新后的订单：", updated);
       setOrder(updated);
       alert("🚚 已发货，车辆开始配送！");
-    } catch (err: unknown) {
-      // 将 err 转换为 Error 类型
-      if (err instanceof Error) {
-        console.error("发货请求失败:", err);
-        alert(`发货失败：${err.message}`);
-      } else {
-        console.error("未知错误:", err);
-        alert("发货失败：未知错误");
-      }
+    } catch {
+      alert("发货失败");
     }
   }
 
-  /* 商家取消 */
   async function handleCancel() {
     if (!confirm("确认取消订单？")) return;
     const updated = await updateStatus(order._id, "商家已取消");
     setOrder(updated);
   }
 
-  /* 删除订单 */
   async function handleDelete() {
     if (!confirm("确认删除订单？")) return;
     await deleteOrder(order._id);
@@ -228,6 +159,13 @@ export default function OrderDetail() {
     navigate("/orders");
   }
 
+  /* ------------------------ 计算订单总价 ------------------------ */
+  const calculateTotal = () => {
+    if (!order?.items) return order?.price || 0;
+    return order.items.reduce((sum: number, item: any) => sum + item.price * item.quantity, 0);
+  };
+
+  /* ------------------------ 渲染 ------------------------ */
   return (
     <div>
       <h2>订单详情</h2>
@@ -238,30 +176,32 @@ export default function OrderDetail() {
         <>
           <p><b>ID：</b>{order._id}</p>
           <p><b>商品：</b>{order.title}</p>
-          <p><b>价格：</b>¥{order.price}</p>
+
+          {order.items && (
+            <div>
+              <b>商品列表：</b>
+              <ul>
+                {order.items.map((item: any, idx: number) => (
+                  <li key={idx}>
+                    {item.name} × {item.quantity} = ¥{item.price * item.quantity}
+                  </li>
+                ))}
+              </ul>
+              <p><b>总价：</b>¥{calculateTotal()}</p>
+            </div>
+          )}
+
           <p><b>客户地址：</b>{order.address.detail}</p>
           <p><b>状态：</b>{order.status}</p>
+          {order.expectedArrival && <p><b>预计送达剩余时间：</b>{etaText}</p>}
 
-          {order.status === "待发货" && (
-            <button onClick={handleShip}>发货</button>
-          )}
-
-          {order.status === "用户申请退货" && (
-            <button onClick={handleCancel}>取消订单</button>
-          )}
-
-          {(order.status === "已送达" || order.status === "商家已取消") && (
-            <button onClick={handleDelete}>删除订单</button>
-          )}
+          {order.status === "待发货" && <button onClick={handleShip}>发货</button>}
+          {order.status === "用户申请退货" && <button onClick={handleCancel}>取消订单</button>}
+          {(order.status === "已完成" || order.status === "商家已取消") && <button onClick={handleDelete}>删除订单</button>}
 
           <div
             ref={mapRef}
-            style={{
-              height: 420,
-              marginTop: 16,
-              borderRadius: 8,
-              border: "1px solid #eee",
-            }}
+            style={{ height: 420, marginTop: 16, borderRadius: 8, border: "1px solid #eee" }}
           />
         </>
       )}

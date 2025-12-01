@@ -1,5 +1,5 @@
 /* ===========================================
-   类型定义（完全匹配你的后端）
+   类型定义（匹配后端）
 =========================================== */
 import axios from 'axios';
 
@@ -19,13 +19,17 @@ export type OrderStatus =
   | "待发货"
   | "配送中"
   | "已送达"
+  | "已完成"
   | "用户申请退货"
   | "商家已取消";
 
 export interface Order {
   _id: string;
   title: string;
-  price: number;
+  price: number;          // 单价
+  quantity: number;       // 数量
+  totalPrice: number;     // 总价 = price * quantity
+  eta:number;
   address: Address;
   merchantId: string;
   userId: string;
@@ -34,10 +38,10 @@ export interface Order {
   updatedAt: string;
 }
 
+
 /* ===========================
    API BASE（你的后端地址）
 =========================== */
-
 const BASE = "https://system-backend.zeabur.app/api/orders";
 
 /* 全局 Header */
@@ -52,9 +56,7 @@ function authHeader() {
    1. 获取订单列表
 =========================== */
 export async function fetchOrders(): Promise<Order[]> {
-  const res = await fetch(BASE, {
-    headers: authHeader(),
-  });
+  const res = await fetch(BASE, { headers: authHeader() });
   if (!res.ok) throw new Error("获取订单列表失败");
   return res.json();
 }
@@ -63,21 +65,20 @@ export async function fetchOrders(): Promise<Order[]> {
    2. 获取单个订单
 =========================== */
 export async function fetchOrder(id: string): Promise<Order> {
-  const res = await fetch(`${BASE}/${id}`, {
-    headers: authHeader(),
-  });
+  const res = await fetch(`${BASE}/${id}`, { headers: authHeader() });
   if (!res.ok) throw new Error("获取订单失败");
   return res.json();
 }
 
 /* ===========================
-   3. 用户创建订单
+   3. 用户创建订单（新增 quantity）
 =========================== */
 export async function createOrder(payload: {
   title: string;
-  price: number;
-  address: string; // 用户输入纯文本
+  productId: string;
   merchantId: string;
+  quantity: number; // 新增
+  address: { detail: string; lng?: number; lat?: number };
 }) {
   const res = await fetch(BASE, {
     method: "POST",
@@ -106,8 +107,8 @@ export async function shipOrder(id: string) {
 /**
  * status 可为：
  * 用户：申请退货 → "用户申请退货"
+ * 用户：确认收货 → "已完成"
  * 商家：取消订单 → "商家已取消"
- * 商家：确认送达 → "已送达"
  */
 export async function updateStatus(id: string, status: OrderStatus) {
   const res = await fetch(`${BASE}/${id}/status`, {
@@ -120,7 +121,7 @@ export async function updateStatus(id: string, status: OrderStatus) {
 }
 
 /* ===========================
-   6. 删除订单（用户/商家都能删）
+   6. 删除订单（用户/商家）
 =========================== */
 export async function deleteOrder(id: string) {
   const res = await fetch(`${BASE}/${id}`, {
@@ -132,39 +133,19 @@ export async function deleteOrder(id: string) {
 }
 
 /* ===========================
-   7. 请求路线：只需要 orderId
+   7. 请求路线（返回 points）
 =========================== */
 export async function requestRoute(orderId: string) {
-  try {
-    const url = `${BASE}/route?id=${orderId}`;  // 完整的 API 地址
-    console.log("发送路径规划请求：", url);
+  const url = `${BASE}/route?id=${orderId}`;
+  const token = localStorage.getItem("token");
+  if (!token) throw new Error("没有授权 Token");
 
-    const token = localStorage.getItem("token");  // 获取存储的 token
-    if (!token) {
-      console.error("没有授权 Token，无法发送请求");
-      throw new Error("没有授权 Token");
-    }
-
-    const response = await axios.get(url, {
-      headers: {
-        "Authorization": `Bearer ${token}`,  // 将 Token 传递给请求头
-        "Content-Type": "application/json",
-      }
-    });
-    
-    console.log("路径规划响应：", response.data);  // 输出响应内容，检查返回的数据
-    
-    return response.data;
-  } catch (err) {
-    console.error("路径规划请求失败：", err);
-    throw new Error("路径规划失败");
-  }
+  const response = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  
+  return response.data;
 }
-
-
-
-
-
 
 /* ===========================
    8. 获取路线（前端地图使用）

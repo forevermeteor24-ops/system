@@ -235,11 +235,12 @@ export default function MerchantHome() {
 
               <div style={{ marginTop: 8 }}>
                 <div>价格：¥{o.price}</div>
+                <div>数量：{o.quantity}</div>
+                <div>总价：¥{o.totalPrice}</div>
                 <div>收货地址：{o.address.detail}</div>
-                <div>
-                  状态：<em>{o.status}</em>
-                </div>
+                <div>状态：<em>{o.status}</em></div>
               </div>
+
 
               <div
                 style={{
@@ -258,7 +259,7 @@ export default function MerchantHome() {
                     取消订单
                   </button>
                 )}
-                {(o.status === "已送达" || o.status === "商家已取消") && (
+                {(o.status === "已完成" || o.status === "商家已取消") && (
                   <button onClick={() => doDelete(o._id)}>删除订单</button>
                 )}
               </div>

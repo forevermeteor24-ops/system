@@ -213,6 +213,13 @@ export default function MerchantHome() {
         <h2>商家后台</h2>
         <div>
           <button
+             onClick={() => navigate("/dashboard")}
+             style={{ marginRight: 10 }}
+          >
+            数据可视化看板
+          </button>
+          
+          <button
             onClick={() => {
               localStorage.removeItem("token");
               localStorage.removeItem("merchantId");

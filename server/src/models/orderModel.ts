@@ -64,6 +64,8 @@ const OrderSchema = new mongoose.Schema(
     /** ETA（以时间戳 ms 存储，表示预计到达时间） */
     eta: { type: Number, default: null },
 
+    deliveredAt: { type: Number, default: null },
+
     /** 中文订单状态 */
     status: {
       type: String,

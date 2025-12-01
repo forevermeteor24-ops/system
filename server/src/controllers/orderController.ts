@@ -21,7 +21,7 @@ export async function createOrder(req: Request, res: Response) {
       productId,
       merchantId: bodyMerchantId,
       userId: bodyUserId,
-      quantity, // 新增：前端传过来的购买数量
+      quantity,
     } = req.body;
 
     if (!title || !address || !productId || !quantity) {
@@ -39,27 +39,37 @@ export async function createOrder(req: Request, res: Response) {
     let userId: string | undefined;
 
     if (actor.role === "user") {
-      if (!bodyMerchantId) return res.status(400).json({ error: "用户下单必须提供 merchantId" });
+      if (!bodyMerchantId) {
+        return res.status(400).json({ error: "用户下单必须提供 merchantId" });
+      }
       merchantId = bodyMerchantId;
       userId = actor.userId;
     } else if (actor.role === "merchant") {
       merchantId = actor.userId;
       if (bodyUserId) userId = bodyUserId;
-    } else return res.status(403).json({ error: "无权限创建订单" });
+    } else {
+      return res.status(403).json({ error: "无权限创建订单" });
+    }
 
     const product = await ProductModel.findById(productId);
     if (!product) return res.status(404).json({ error: "商品不存在" });
+
     if (product.merchantId.toString() !== merchantId) {
       return res.status(403).json({ error: "商品不属于该商家" });
     }
 
-    // 总价 = 商品价格 * 数量
-    const totalPrice = product.price * quantity;
+    /** 单价 */
+    const price = product.price;
 
+    /** 总价 = 单价 * 数量 */
+    const totalPrice = price * quantity;
+
+    /** 创建订单 */
     const order = await OrderModel.create({
       title,
-      price: totalPrice,  // 使用总价
-      quantity,           // 保存购买数量
+      price,        // ⭐ 单价
+      totalPrice,   // ⭐ 总价（必填）
+      quantity,
       address: {
         detail: address.detail,
         lng: address.lng || null,
@@ -74,7 +84,10 @@ export async function createOrder(req: Request, res: Response) {
     return res.status(201).json(order);
   } catch (err: any) {
     console.error("createOrder error:", err);
-    return res.status(500).json({ error: "创建订单失败", detail: err.message });
+    return res.status(500).json({
+      error: "创建订单失败",
+      detail: err.message,
+    });
   }
 }
 

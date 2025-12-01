@@ -121,7 +121,9 @@ export class TrackPlayer {
       // 更新订单状态为 已送达
       await OrderModel.updateOne(
         { _id: this.orderId },
-        { $set: { status: "已送达" } }
+        { $set: { status: "已送达" },
+          deliveredAt: Date.now()   // ⭐ 新增字段（用于计算配送时效） 
+          }
       );
 
       console.log(`✔ 订单 ${this.orderId} 已送达`);

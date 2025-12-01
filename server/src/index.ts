@@ -10,6 +10,7 @@ import { connectDB } from "./config/db";
 import authRoutes from "./api/authRoutes";
 import merchantRoutes from "./api/merchantRoutes";
 import productRoutes from "./api/productRoutes"; // 引入 productRoutes
+import dashboardRoutes from "./api/dashboardRoutes";
 
 async function main() {
   await connectDB();
@@ -23,6 +24,7 @@ async function main() {
   app.use("/api/orders", orderRoutes);
   app.use("/api/merchants", merchantRoutes);
   app.use("/api/products", productRoutes);  // 挂载商品路由
+  app.use("/api/dashboard", dashboardRoutes);
 
   const server = http.createServer(app);
   setupWS(server);

@@ -6,18 +6,17 @@ import Register from "./pages/Register";
 import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Profile from "./pages/Profile";
+import Dashboard from "./pages/Dashboard"; // ⭐ 新增
 
 /** 强制每次访问都要求登录 */
 function ForceLogin({ children }: { children: React.ReactNode }) {
   const location = useLocation();
 
   useEffect(() => {
-    // 仅首次加载页面时执行
     if (sessionStorage.getItem("force-login-done")) return;
 
     const path = location.pathname;
 
-    // 不是 /login 或 /register → 清除登录
     if (!path.startsWith("/login") && !path.startsWith("/register")) {
       localStorage.removeItem("token");
     }
@@ -30,39 +29,49 @@ function ForceLogin({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-      <Routes>
-        {/* 登录、注册允许访问 */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+    <Routes>
+      {/* 登录、注册允许访问 */}
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
 
-        {/* 其它页面：强制登录 */}
-        <Route
-          path="/orders"
-          element={
-            <ForceLogin>
-              <Orders />
-            </ForceLogin>
-          }
-        />
-        <Route
-          path="/orders/:id"
-          element={
-            <ForceLogin>
-              <OrderDetail />
-            </ForceLogin>
-          }
-        />
-        <Route
-          path="/merchant/profile"
-          element={
-            <ForceLogin>
-              <Profile />
-            </ForceLogin>
-          }
-        />
+      {/* ---- 需要登录页面 ---- */}
+      <Route
+        path="/orders"
+        element={
+          <ForceLogin>
+            <Orders />
+          </ForceLogin>
+        }
+      />
+      <Route
+        path="/orders/:id"
+        element={
+          <ForceLogin>
+            <OrderDetail />
+          </ForceLogin>
+        }
+      />
+      <Route
+        path="/merchant/profile"
+        element={
+          <ForceLogin>
+            <Profile />
+          </ForceLogin>
+        }
+      />
 
-        {/* 默认跳 orders（但仍会被 ForceLogin 拉回 login） */}
-        <Route path="*" element={<Navigate to="/orders" replace />} />
-      </Routes>
+      {/* ⭐⭐ 新增：Dashboard 数据可视化看板 ⭐⭐ */}
+      <Route
+        path="/dashboard"
+        element={
+          <ForceLogin>
+            <Dashboard />
+          </ForceLogin>
+        }
+      />
+
+      {/* 默认跳 orders */}
+      <Route path="*" element={<Navigate to="/orders" replace />} />
+    </Routes>
   );
 }

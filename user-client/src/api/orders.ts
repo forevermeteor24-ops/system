@@ -82,8 +82,12 @@ export async function createOrder(payload: {
   productId: string;
   merchantId: string;
   quantity: number; // 新增
-  address: { detail: string; lng?: number; lat?: number };
-}) {
+  address: {
+    detail: string;
+    lng: number | null;
+    lat: number | null;
+  };
+ }) {
   const res = await fetch(BASE, {
     method: "POST",
     headers: authHeader(),

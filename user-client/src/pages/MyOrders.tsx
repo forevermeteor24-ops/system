@@ -57,21 +57,25 @@ export default function MyOrders() {
     if (!productId) return alert("请选择商品！");
     if (!userAddress.trim()) return alert("用户地址为空，请去个人资料设置！");
     if (!quantity || quantity <= 0) return alert("请输入有效的商品数量！");
-
+  
     try {
       const selectedProduct = products.find((product) => product._id === productId);
-
+  
       await http.post("/api/orders", {
-        merchantId,                      // ⭐ 使用所选商家的ID
-        title: selectedProduct?.name,     // 商品名称
-        price: selectedProduct?.price,    // 商品价格
-        quantity,
-        address: { detail: userAddress, lng: null, lat: null },
+        merchantId,                   // 商家 ID
+        productId,                    // ⭐ 必须传，否则后端查不到商品价格
+        title: selectedProduct?.name, // 商品标题
+        quantity,                     // 购买数量
+        address: {
+          detail: userAddress,
+          lng: null,
+          lat: null,
+        },
       });
-
+  
       alert("创建成功！");
       setShowModal(false);
-
+  
       const data = await fetchOrders();
       setOrders(data);
     } catch (err) {
@@ -79,7 +83,7 @@ export default function MyOrders() {
       alert("创建订单失败");
     }
   };
-
+  
   useEffect(() => {
     (async () => {
       try {

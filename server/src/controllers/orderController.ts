@@ -17,60 +17,49 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       title,
-      address,  // 前端传来的是对象：{ detail: "xxx", lng:..., lat:... }
-      price,
-      productId,  // 用户选择的商品ID
+      address,
+      productId,
       merchantId: bodyMerchantId,
       userId: bodyUserId,
+      quantity, // 新增：前端传过来的购买数量
     } = req.body;
 
-    // 🔍 调试：查看传入的数据
-    console.log("CreateOrder Received:", { title, price, address, productId });
-
-    // 校验必填字段
-    if (!title || !address || price == null || !productId) {
-      return res.status(400).json({ error: "缺少 title、address、price 或 productId" });
+    if (!title || !address || !productId || !quantity) {
+      return res.status(400).json({ error: "缺少 title、address、productId 或 quantity" });
     }
 
-    if (typeof price !== "number" || price <= 0)
-      return res.status(400).json({ error: "price 必须是正数" });
+    if (typeof quantity !== "number" || quantity <= 0) {
+      return res.status(400).json({ error: "quantity 必须为正数" });
+    }
 
-    const actor = (req as any).user; // 获取当前用户
+    const actor = (req as any).user;
     if (!actor) return res.status(401).json({ error: "未登录" });
 
     let merchantId: string | undefined;
     let userId: string | undefined;
 
-    /** 用户下单时必须指定商家 */
     if (actor.role === "user") {
-      if (!bodyMerchantId)
-        return res.status(400).json({ error: "用户下单必须提供 merchantId" });
-
+      if (!bodyMerchantId) return res.status(400).json({ error: "用户下单必须提供 merchantId" });
       merchantId = bodyMerchantId;
       userId = actor.userId;
-    }
-
-    /** 商家创建订单 */
-    else if (actor.role === "merchant") {
+    } else if (actor.role === "merchant") {
       merchantId = actor.userId;
       if (bodyUserId) userId = bodyUserId;
-    } else {
-      return res.status(403).json({ error: "无权限创建订单" });
-    }
+    } else return res.status(403).json({ error: "无权限创建订单" });
 
-    // 查找商品，确保商品属于当前商家
     const product = await ProductModel.findById(productId);
-    if (!product) {
-      return res.status(404).json({ error: "商品不存在" });
-    }
+    if (!product) return res.status(404).json({ error: "商品不存在" });
     if (product.merchantId.toString() !== merchantId) {
-      return res.status(403).json({ error: "无法为此商品创建订单，商品不属于该商家" });
+      return res.status(403).json({ error: "商品不属于该商家" });
     }
 
-    // 创建订单
+    // 总价 = 商品价格 * 数量
+    const totalPrice = product.price * quantity;
+
     const order = await OrderModel.create({
       title,
-      price: product.price,  // 使用商品的价格
+      price: totalPrice,  // 使用总价
+      quantity,           // 保存购买数量
       address: {
         detail: address.detail,
         lng: address.lng || null,
@@ -79,16 +68,13 @@ export async function createOrder(req: Request, res: Response) {
       status: "待发货",
       merchantId,
       userId,
-      productId,  // 记录商品ID
+      productId,
     });
 
     return res.status(201).json(order);
   } catch (err: any) {
     console.error("createOrder error:", err);
-    return res.status(500).json({
-      error: "创建订单失败",
-      detail: err.message,
-    });
+    return res.status(500).json({ error: "创建订单失败", detail: err.message });
   }
 }
 
@@ -234,33 +220,42 @@ export async function updateOrderStatus(req: Request, res: Response) {
     if (!order) return res.status(404).json({ error: "订单不存在" });
 
     /* ------------------------
-        用户行为：申请退货
+        用户行为
     ------------------------ */
     if (actor.role === "user") {
-      if (status !== "用户申请退货")
-        return res.status(403).json({ error: "用户无法更新为该状态" });
+      if (status === "用户申请退货") {
+        if (!["待发货", "配送中"].includes(order.status))
+          return res.status(400).json({ error: "当前状态不可申请退货" });
 
-      if (!["待发货", "配送中"].includes(order.status))
-        return res.status(400).json({ error: "当前状态不可申请退货" });
+        order.status = "用户申请退货";
+        await order.save();
+        return res.json(order);
+      }
 
-      order.status = "用户申请退货";
-      await order.save();
-      return res.json(order);
+      if (status === "已完成") {
+        // 仅用户确认收货时可更新
+        if (order.status !== "已送达")
+          return res.status(400).json({ error: "只有已送达状态才能确认收货" });
+
+        order.status = "已完成";
+        await order.save();
+        return res.json(order);
+      }
+
+      return res.status(403).json({ error: "用户无法更新为该状态" });
     }
 
     /* ------------------------
-        商家行为：取消订单
+        商家行为
     ------------------------ */
     if (actor.role === "merchant") {
       if (order.merchantId.toString() !== actor.userId)
         return res.status(403).json({ error: "不能操作其他商家订单" });
 
-      // ⛔ 你要求：商家只有在【用户申请退货】状态才能取消
+      // 商家取消订单
       if (status === "商家已取消") {
         if (order.status !== "用户申请退货") {
-          return res.status(400).json({
-            error: "只有在用户申请退货时商家才能取消订单"
-          });
+          return res.status(400).json({ error: "只有在用户申请退货时商家才能取消订单" });
         }
 
         order.status = "商家已取消";
@@ -270,8 +265,12 @@ export async function updateOrderStatus(req: Request, res: Response) {
 
       return res.status(403).json({ error: "商家不能更新为该状态" });
     }
-  } catch (err) {
-    return res.status(500).json({ error: "状态更新失败" });
+
+    return res.status(403).json({ error: "无权限更新订单状态" });
+
+  } catch (err: any) {
+    console.error("updateOrderStatus error:", err);
+    return res.status(500).json({ error: "状态更新失败", detail: err.message });
   }
 }
 
@@ -284,30 +283,25 @@ export async function deleteOrder(req: Request, res: Response) {
     const order = await OrderModel.findById(orderId);
     if (!order) return res.status(404).json({ error: "订单不存在" });
 
-    const canDelete = ["已送达", "商家已取消"];
-
+    // 只有 "已完成" 或 "商家已取消" 状态可以删除
+    const canDelete = ["已完成", "商家已取消"];
     if (!canDelete.includes(order.status))
       return res.status(400).json({ error: "当前状态不可删除订单" });
 
-    // 只能删自己的
-    if (
-      actor.role === "user" &&
-      order.userId.toString() !== actor.userId
-    ) {
+    // 只能删除自己的订单
+    if (actor.role === "user" && order.userId.toString() !== actor.userId) {
       return res.status(403).json({ error: "不能删除他人订单" });
     }
 
-    if (
-      actor.role === "merchant" &&
-      order.merchantId.toString() !== actor.userId
-    ) {
+    if (actor.role === "merchant" && order.merchantId.toString() !== actor.userId) {
       return res.status(403).json({ error: "不能删除他人订单" });
     }
 
     await order.deleteOne();
-    res.json({ message: "订单已删除" });
-  } catch (err) {
-    res.status(500).json({ error: "删除失败" });
+    return res.json({ message: "订单已删除" });
+  } catch (err: any) {
+    console.error("deleteOrder error:", err);
+    return res.status(500).json({ error: "删除失败", detail: err.message });
   }
 }
 

@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "couple-dude-buffalo-rock.trycloudflare.com"
+      "millennial-irremeably-millie.ngrok-free.dev"
     ],
   },
 });

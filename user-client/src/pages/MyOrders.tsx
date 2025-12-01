@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";  // 使用 Link 跳转
+import { Link, useNavigate } from "react-router-dom";
 import { fetchOrders } from "../api/orders";
 import { fetchMerchants } from "../api/merchants";
+import { fetchProductsByMerchant } from "../api/products";  // 获取商品的 API
 import http from "../api/http";
 import type { Order } from "../types/order";
 
@@ -11,14 +12,16 @@ export default function MyOrders() {
   const [sort, setSort] = useState("time_desc");
 
   const [showModal, setShowModal] = useState(false);
-  const [merchants, setMerchants] = useState<any[]>([]);
+  const [merchants, setMerchants] = useState<any[]>([]); 
+  const [products, setProducts] = useState<any[]>([]);  // 存储商家的商品列表
   const [merchantId, setMerchantId] = useState("");
-  const [title, setTitle] = useState("");
-  const [price, setPrice] = useState("");
-  const [userAddress, setUserAddress] = useState("");
+  const [productId, setProductId] = useState("");  // 选择的商品ID
+  const [title, setTitle] = useState("");  // 商品名称
+  const [userAddress, setUserAddress] = useState("");  // 用户地址
 
   const navigate = useNavigate();  // 使用 useNavigate
 
+  // 加载商家列表及用户地址
   const loadCreateOrderData = async () => {
     try {
       const data = await fetchMerchants();
@@ -28,6 +31,48 @@ export default function MyOrders() {
     } catch (err) {
       console.error(err);
       alert("无法加载创建订单信息");
+    }
+  };
+
+  // 当商家选择变化时，加载该商家的商品列表
+  const handleMerchantChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedMerchantId = e.target.value;
+    setMerchantId(selectedMerchantId);
+  
+    // 获取该商家的商品列表
+    try {
+      const productList = await fetchProductsByMerchant(selectedMerchantId);  // 通过商家ID获取商品
+      setProducts(productList);  // 更新商品列表
+    } catch (err) {
+      console.error(err);
+      alert("无法加载商品列表");
+    }
+  };
+
+  // 创建订单
+  const createOrder = async () => {
+    if (!merchantId) return alert("请选择商家！");
+    if (!productId) return alert("请选择商品！");
+    if (!userAddress.trim()) return alert("用户地址为空，请去个人资料设置！");
+
+    try {
+      const selectedProduct = products.find((product) => product._id === productId);
+
+      await http.post("/api/orders", {
+        merchantId,
+        title: selectedProduct?.name,  // 使用商品名称作为订单标题
+        price: selectedProduct?.price,  // 使用商品价格
+        address: { detail: userAddress, lng: null, lat: null },
+      });
+
+      alert("创建成功！");
+      setShowModal(false);
+
+      const data = await fetchOrders();
+      setOrders(data);
+    } catch (err) {
+      console.error(err);
+      alert("创建订单失败");
     }
   };
 
@@ -45,36 +90,7 @@ export default function MyOrders() {
     })();
   }, []);
 
-  const openModal = () => {
-    loadCreateOrderData();
-    setShowModal(true);
-  };
-
-  const createOrder = async () => {
-    if (!merchantId) return alert("请选择商家！");
-    if (!title.trim()) return alert("请输入商品名称！");
-    if (!price.trim()) return alert("请输入价格！");
-    if (!userAddress.trim()) return alert("用户地址为空，请去个人资料设置！");
-
-    try {
-      await http.post("/api/orders", {
-        merchantId,
-        title,
-        price: Number(price),
-        address: { detail: userAddress, lng: null, lat: null },
-      });
-
-      alert("创建成功！");
-      setShowModal(false);
-
-      const data = await fetchOrders();
-      setOrders(data);
-    } catch (err) {
-      console.error(err);
-      alert("创建订单失败");
-    }
-  };
-
+  // 排序逻辑
   const sortedOrders = [...orders].sort((a, b) => {
     const tA = a.createdAt ? +new Date(a.createdAt) : 0;
     const tB = b.createdAt ? +new Date(b.createdAt) : 0;
@@ -86,7 +102,7 @@ export default function MyOrders() {
     return 0;
   });
 
-  /* 退出登录 */
+  // 退出登录
   const handleLogout = () => {
     localStorage.removeItem("token");
     navigate("/login");  // 使用 navigate 跳转到登录页面
@@ -132,7 +148,10 @@ export default function MyOrders() {
 
       {/* 创建订单按钮 */}
       <button
-        onClick={openModal}
+        onClick={() => {
+          loadCreateOrderData();
+          setShowModal(true);
+        }}
         style={{
           marginBottom: 20,
           padding: "10px 14px",
@@ -207,7 +226,7 @@ export default function MyOrders() {
               <label>商家</label>
               <select
                 value={merchantId}
-                onChange={(e) => setMerchantId(e.target.value)}
+                onChange={handleMerchantChange}
                 style={{ width: "100%", padding: 8, marginTop: 6 }}
               >
                 <option value="">请选择商家</option>
@@ -221,21 +240,19 @@ export default function MyOrders() {
 
             <div style={{ marginTop: 15 }}>
               <label>商品名称</label>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
+              <select
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
                 style={{ width: "100%", padding: 8, marginTop: 6 }}
-              />
-            </div>
-
-            <div style={{ marginTop: 15 }}>
-              <label>价格</label>
-              <input
-                type="number"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 6 }}
-              />
+                disabled={!merchantId}
+              >
+                <option value="">请选择商品</option>
+                {products.map((product) => (
+                  <option key={product._id} value={product._id}>
+                    {product.name} - ¥{product.price}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div style={{ marginTop: 15 }}>

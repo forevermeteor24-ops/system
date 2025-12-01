@@ -30,7 +30,7 @@ export default function MyOrders() {
       const u = await http.get("/api/auth/me");
       setUserAddress(u.data.address?.detail || "");
     } catch (err) {
-      console.error(err);
+      console.error("加载创建订单数据失败:", err);
       alert("无法加载创建订单信息");
     }
   };
@@ -40,12 +40,14 @@ export default function MyOrders() {
     const selectedMerchantId = e.target.value;
     setMerchantId(selectedMerchantId);
   
+    console.log("选择的商家ID:", selectedMerchantId);  // 调试信息
+  
     // 获取该商家的商品列表
     try {
       const productList = await fetchProductsByMerchant(selectedMerchantId);  // 通过商家ID获取商品
       setProducts(productList);  // 更新商品列表
     } catch (err) {
-      console.error(err);
+      console.error("获取商品列表失败:", err);
       alert("无法加载商品列表");
     }
   };
@@ -74,7 +76,7 @@ export default function MyOrders() {
       const data = await fetchOrders();
       setOrders(data);
     } catch (err) {
-      console.error(err);
+      console.error("创建订单失败:", err);
       alert("创建订单失败");
     }
   };
@@ -85,7 +87,7 @@ export default function MyOrders() {
         const data = await fetchOrders();
         setOrders(data);
       } catch (err) {
-        console.error(err);
+        console.error("获取订单失败:", err);
         alert("获取订单失败");
       } finally {
         setLoading(false);

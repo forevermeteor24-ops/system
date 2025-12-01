@@ -17,13 +17,16 @@ export default function MerchantHome() {
 
   // 加载商家的商品列表
   const loadProducts = async () => {
-    console.log(products);
+    console.log("商家ID:", merchantId);  // 确认商家ID是否有效
     setLoading(true);
     try {
       if (merchantId) {
         // 获取商家商品列表
         const data = await fetchProductsByMerchant(merchantId);
+        console.log("商品数据:", data);  // 确保正确获取商品数据
         setProducts(data);
+      } else {
+        alert("商家ID无效，请登录后再试");
       }
     } catch (err) {
       console.error(err);
@@ -64,9 +67,15 @@ export default function MerchantHome() {
   };
 
   useEffect(() => {
-    loadOrders();
-    loadProducts();
-  }, [merchantId]);  // 监听 merchantId 变化，加载商品和订单
+    const merchantIdFromStorage = localStorage.getItem("merchantId");
+    if (merchantIdFromStorage) {
+      setMerchantId(merchantIdFromStorage);
+      loadOrders();
+      loadProducts();
+    } else {
+      navigate("/login");  // 如果没有商家ID，跳转到登录页
+    }
+  }, []);  // 只在组件首次加载时执行
 
   // 订单发货
   const doShip = async (id: string) => {
@@ -249,15 +258,19 @@ export default function MerchantHome() {
         </button>
 
         <div>
-          {products.map((product) => (
-            <div key={product._id}>
-              <span>{product.name}</span> - <span>¥{product.price}</span>
-              <button onClick={() => handleDeleteProduct(product._id)}>删除</button>
-              <button onClick={() => { setProductToEdit(product); setShowProductModal(true); }}>
-                编辑
-              </button>
-            </div>
-          ))}
+          {products.length === 0 ? (
+            <p>暂无商品</p>
+          ) : (
+            products.map((product) => (
+              <div key={product._id}>
+                <span>{product.name}</span> - <span>¥{product.price}</span>
+                <button onClick={() => handleDeleteProduct(product._id)}>删除</button>
+                <button onClick={() => { setProductToEdit(product); setShowProductModal(true); }}>
+                  编辑
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

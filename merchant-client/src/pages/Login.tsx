@@ -8,10 +8,19 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>("");
 
+  // 登录处理函数
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setError(""); // 清空之前的错误信息
+
+    if (!username || !password) {
+      setError("请输入用户名和密码！");
+      setLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch("https://system-backend.zeabur.app/api/auth/login", {
@@ -20,30 +29,34 @@ export default function Login() {
         body: JSON.stringify({
           username,
           password,
-          role: "merchant",      // ⭐ 商家端固定 role=merchant
+          role: "merchant",  // 商家端固定 role=merchant
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        alert(data.error || "登录失败");
+        setError(data.error || "登录失败");
         setLoading(false);
         return;
       }
 
-      /* 保存 token 和角色 */
+      // 保存 token、role 和 merchantId
       localStorage.setItem("token", data.token);
       localStorage.setItem("role", data.role);
+      localStorage.setItem("merchantId", data.userId);  // 保存商家ID
+
+      console.log("登录成功，商家ID已保存:", data.userId);  // 调试信息
+      console.log("登录成功，返回的数据：", data);  // 打印后端返回的数据
 
       alert("登录成功！");
 
-      /* 商家端跳转到订单 */
-      navigate("/orders");
+      // 商家端跳转到后台首页
+      navigate("/merchant");
 
     } catch (err) {
       console.error(err);
-      alert("登录失败，请检查网络");
+      setError("登录失败，请检查网络");
     } finally {
       setLoading(false);
     }
@@ -71,6 +84,7 @@ export default function Login() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
+            placeholder="请输入用户名"
             style={inputStyle}
           />
         </div>
@@ -83,6 +97,7 @@ export default function Login() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            placeholder="请输入密码"
             style={inputStyle}
           />
           <span
@@ -92,6 +107,13 @@ export default function Login() {
             {showPwd ? "🙈" : "👁️"}
           </span>
         </div>
+
+        {/* 错误信息 */}
+        {error && (
+          <div style={{ color: "red", marginBottom: 15 }}>
+            {error}
+          </div>
+        )}
 
         {/* 登录按钮 */}
         <button

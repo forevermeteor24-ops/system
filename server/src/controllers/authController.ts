@@ -50,7 +50,6 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
-
 export const login = async (req: Request, res: Response) => {
   try {
     const { username, password, role } = req.body;
@@ -76,9 +75,11 @@ export const login = async (req: Request, res: Response) => {
       { expiresIn: "7d" }
     );
 
+    // 返回 token, role 和 userId
     res.json({
       token,
       role: user.role,
+      userId: user._id,  // 返回商家ID（userId）
     });
 
   } catch (err) {
@@ -86,3 +87,4 @@ export const login = async (req: Request, res: Response) => {
     res.status(500).json({ error: "登录失败" });
   }
 };
+

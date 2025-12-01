@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 // JWT 解码后的类型
 interface DecodedUser {
   userId: string;
-  role: "merchant" | "user";
+  role: "merchant" | "user" | string;  // 角色类型可以扩展更多
   iat?: number;
   exp?: number;
 }
@@ -32,7 +32,7 @@ export const auth = (roles: string[] = []) => {
         process.env.JWT_SECRET as string
       ) as DecodedUser;
 
-      // 如果需要检查角色，且用户的角色不在允许的角色列表中，则拒绝访问
+      // 角色权限检查：如果没有指定角色或角色不匹配，则拒绝访问
       if (roles.length > 0 && !roles.includes(decoded.role)) {
         return res.status(403).json({ error: "无权限访问" });
       }
@@ -43,6 +43,7 @@ export const auth = (roles: string[] = []) => {
       // 继续执行后续的中间件或路由处理函数
       next();
     } catch (err) {
+      console.error("JWT 验证失败:", err);
       return res.status(401).json({ error: "无效 Token" });
     }
   };

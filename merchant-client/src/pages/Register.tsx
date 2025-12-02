@@ -9,6 +9,8 @@ export default function Register() {
   const [confirmPwd, setConfirmPwd] = useState("");
   const [showPwd, setShowPwd] = useState(false);
 
+  const [phone, setPhone] = useState("");   // ⭐ 新增手机号
+
   const [address, setAddress] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -21,6 +23,11 @@ export default function Register() {
       return;
     }
 
+    if (!phone || phone.trim().length < 5) {
+      alert("请输入正确的手机号！");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -30,7 +37,8 @@ export default function Register() {
         body: JSON.stringify({
           username,
           password,
-          role: "merchant", // ⭐ 固定为商家
+          role: "merchant", // 固定为商家
+          phone,           // ⭐ 新增：手机号
           address: {
             detail: address,
             lng: null,
@@ -72,6 +80,7 @@ export default function Register() {
       <h2 style={{ textAlign: "center", marginBottom: 20 }}>商家注册</h2>
 
       <form onSubmit={handleRegister}>
+
         {/* 用户名 */}
         <div style={{ marginBottom: 15 }}>
           <label>商家账号</label>
@@ -81,6 +90,19 @@ export default function Register() {
             onChange={(e) => setUsername(e.target.value)}
             required
             placeholder="请输入商家登录名"
+            style={inputStyle}
+          />
+        </div>
+
+        {/* 手机号 ⭐ */}
+        <div style={{ marginBottom: 15 }}>
+          <label>联系电话</label>
+          <input
+            type="text"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            required
+            placeholder="请输入商家联系电话"
             style={inputStyle}
           />
         </div>
@@ -150,7 +172,6 @@ export default function Register() {
         </button>
       </form>
 
-      {/* 跳转登录 */}
       <div style={{ marginTop: 20, textAlign: "center" }}>
         已有账号？
         <Link to="/login" style={{ color: "#4a90e2", marginLeft: 5 }}>

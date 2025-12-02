@@ -5,17 +5,22 @@ import jwt from "jsonwebtoken";
 import { geocodeAddress } from "./orderController"
 export const register = async (req: Request, res: Response) => {
   try {
-    let { username, password, role, address } = req.body;
+    let { username, password, role, address, phone } = req.body;
 
     if (!username || !password || !role) {
       return res.status(400).json({ error: "缺少 username / password / role" });
+    }
+
+    // ⭐ 新增：检查 phone 是否存在
+    if (!phone || typeof phone !== "string" || phone.trim().length < 5) {
+      return res.status(400).json({ error: "请填写有效的手机号" });
     }
 
     // 用户名是否重复
     const exist = await User.findOne({ username });
     if (exist) return res.status(400).json({ error: "用户名已存在" });
 
-    // address 可能是字符串
+    // 地址可能是字符串
     if (typeof address === "string") {
       address = {
         detail: address,
@@ -24,12 +29,12 @@ export const register = async (req: Request, res: Response) => {
       };
     }
 
-    // 商家必须有地址 detail
+    // 商家必须填写地址
     if (role === "merchant" && !address?.detail) {
       return res.status(400).json({ error: "商家必须填写地址" });
     }
 
-    // ⭐ 在这里解析地址 → 得到经纬度
+    // ⭐ 地址解析（有 detail 才解析）
     if (address?.detail) {
       try {
         const geo = await geocodeAddress(address.detail);
@@ -46,12 +51,13 @@ export const register = async (req: Request, res: Response) => {
     // 加密密码
     const hashed = await bcrypt.hash(password, 10);
 
-    // 创建用户
+    // ⭐ 创建用户 + 保存电话
     await User.create({
       username,
       password: hashed,
       role,
-      address,   // ⭐ 现在已经包含 detail + lng + lat
+      phone,       // ⭐ 新增字段，保存手机号
+      address,
     });
 
     res.json({ message: "注册成功" });

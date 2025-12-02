@@ -3,7 +3,7 @@ dotenv.config();
 
 import express from "express";
 import cors from "cors";
-import http from "http";
+import * as http from "http";
 import orderRoutes from "./api/orderRoutes";
 import { setupWS } from "./ws";
 import { connectDB } from "./config/db";
@@ -29,10 +29,11 @@ async function main() {
   const server = http.createServer(app);
   setupWS(server);
 
-  const PORT = process.env.PORT || 8080;
-  server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  const PORT = Number(process.env.PORT) || 8080;
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
 
 }
 

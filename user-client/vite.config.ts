@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "created-legislative-correctly-rentals.trycloudflare.com"
+      "combines-sperm-brakes-partnership.trycloudflare.com"
     ],
   },
 });

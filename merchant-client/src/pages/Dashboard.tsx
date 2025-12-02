@@ -25,53 +25,44 @@ export default function Dashboard() {
   useEffect(() => {
     async function loadData() {
       try {
+        console.log("开始请求数据...");
         const token = localStorage.getItem("token");
         if (!token) {
           console.error("Token 不存在，请重新登录");
           return;
         }
-
+  
         const headers = {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
         };
-
-        // 1. 热力图
-        console.log("Fetching heatmap...");
+  
+        console.log("请求热力图数据...");
         const heatRes = await fetch(`${BASE}/api/dashboard/heatmap`, { headers });
-        console.log("Heatmap response status:", heatRes.status);
-        if (!heatRes.ok) throw new Error("Failed to fetch heatmap");
+        console.log("热力图数据返回:", heatRes);
         const heatData = await heatRes.json();
-        console.log("Heatmap data:", heatData);
         setHeatmap(heatData.points || []);
-
-        // 2. 配送时效
-        console.log("Fetching delivery stats...");
+  
+        console.log("请求配送时效...");
         const statRes = await fetch(`${BASE}/api/dashboard/delivery-stats`, { headers });
-        console.log("Delivery stats response status:", statRes.status);
-        if (!statRes.ok) throw new Error("Failed to fetch delivery stats");
         const stats = await statRes.json();
-        console.log("Delivery stats data:", stats);
         setDeliveryStats(stats);
-
-        // 3. 异常订单
-        console.log("Fetching abnormal orders...");
+  
+        console.log("请求异常订单...");
         const abnRes = await fetch(`${BASE}/api/dashboard/abnormal-orders`, { headers });
-        console.log("Abnormal orders response status:", abnRes.status);
-        if (!abnRes.ok) throw new Error("Failed to fetch abnormal orders");
         const abnormal = await abnRes.json();
-        console.log("Abnormal orders data:", abnormal);
         setAbnormalOrders(abnormal.abnormal || []);
-
+  
       } catch (err) {
         console.error("Dashboard 加载失败", err);
       }
-
+  
       setLoading(false);
     }
-
+  
     loadData();
   }, []);
+  
 
   useEffect(() => {
     if (!heatmap.length) return;

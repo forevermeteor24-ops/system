@@ -211,7 +211,7 @@ export default function OrderDetail() {
 
   /* ---------------- 剩余时间（eta）显示更新 ---------------- */
   useEffect(() => {
-    if (!order || !order.eta || order.status === "商家已取消") {
+    if (!order || !order.eta || order.status === "商家已取消" || order.status === "已送达" || order.status === "已完成") {
       setRemainingTime("已停止");  // 商家取消订单后，显示“已停止”
       return;
     }
@@ -274,7 +274,6 @@ export default function OrderDetail() {
     { key: "配送中", title: "配送中", desc: "配送中，请保持电话畅通" },
     { key: "已送达", title: "已送达", desc: "包裹已送达", time: order?.deliveredAt },
     { key: "已完成", title: "已完成", desc: "订单已完成" },
-    { key: "用户申请退货", title: "用户申请退货", desc: "用户申请了退货", time: order?.updatedAt },  // 退货状态
   ];
 
   const activeIndex = order ? Math.max(0, timeLine.findIndex((i) => i.key === order.status)) : -1;

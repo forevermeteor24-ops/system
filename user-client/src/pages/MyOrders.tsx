@@ -7,31 +7,34 @@ import http from "../api/http";
 import type { Order } from "../types/order";
 
 export default function MyOrders() {
+  const [tab, setTab] = useState<"orders" | "products">("orders");
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [sort, setSort] = useState("time_desc");
   const [statusFilter, setStatusFilter] = useState("全部");
 
-  // 创建订单弹窗
-  const [showModal, setShowModal] = useState(false);
   const [merchants, setMerchants] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [merchantId, setMerchantId] = useState("");
+  const [search, setSearch] = useState("");
+
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [userAddress, setUserAddress] = useState("");
 
+  const [showCreateModal, setShowCreateModal] = useState(false);
+
   const navigate = useNavigate();
 
-  /* ---------------- 加载 ---------------- */
+  /* ---------------- 加载订单 ---------------- */
   useEffect(() => {
     (async () => {
       try {
         const data = await fetchOrders();
         setOrders(data);
       } catch (err) {
-        console.error("获取订单失败:", err);
         alert("获取订单失败");
       } finally {
         setLoading(false);
@@ -39,51 +42,77 @@ export default function MyOrders() {
     })();
   }, []);
 
-  const loadCreateOrderData = async () => {
-    try {
-      const merchantList = await fetchMerchants();
-      setMerchants(merchantList);
+  /* ---------------- 进入商品 Tab 时加载商家 + 用户地址 ---------------- */
+  useEffect(() => {
+    if (tab === "products") {
+      fetchMerchants().then(setMerchants);
 
-      const u = await http.get("/api/auth/me");
-      setUserAddress(u.data.address?.detail || "");
+      http.get("/api/auth/me")
+        .then((res) => setUserAddress(res.data.address?.detail || ""))
+        .catch(() => alert("无法获取用户地址"));
+    }
+  }, [tab]);
+
+  /* ---------------- 用户选择商家时加载商品 ---------------- */
+  const loadProducts = async (id: string) => {
+    setMerchantId(id);
+    if (!id) return setProducts([]);
+
+    const list = await fetchProductsByMerchant(id);
+    setProducts(list);
+  };
+
+  /* ---------------- 秒购：直接下单 ---------------- */
+  const quickBuy = async (product: any) => {
+    if (!userAddress.trim())
+      return alert("你没有设置收货地址，请去个人资料设置。");
+
+    try {
+      await http.post("/api/orders", {
+        merchantId,
+        productId: product._id,
+        title: product.name,
+        quantity: 1,
+        address: { detail: userAddress, lng: null, lat: null }
+      });
+
+      alert("下单成功！");
+      const data = await fetchOrders();
+      setOrders(data);
+      setTab("orders");
     } catch (err) {
-      console.error("加载失败:", err);
-      alert("无法加载创建订单信息");
+      console.error(err);
+      alert("下单失败");
     }
   };
 
-  const handleMerchantChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    setMerchantId(id);
-    const productList = await fetchProductsByMerchant(id);
-    setProducts(productList);
-  };
-
+  /* ---------------- 手动创建订单 ---------------- */
   const createOrder = async () => {
     if (!merchantId) return alert("请选择商家！");
     if (!productId) return alert("请选择商品！");
-    if (!userAddress.trim()) return alert("用户地址为空，请去个人资料设置！");
-    if (quantity <= 0) return alert("数量不正确");
+    if (quantity <= 0) return alert("数量必须 ≥ 1");
+    if (!userAddress.trim()) return alert("你没有设置地址");
+
+    const product = products.find((p) => p._id === productId);
 
     try {
-      const product = products.find((p) => p._id === productId);
-
       await http.post("/api/orders", {
         merchantId,
         productId,
-        title: product?.name,
+        title: product.name,
         quantity,
-        address: { detail: userAddress, lng: null, lat: null },
+        address: { detail: userAddress, lng: null, lat: null }
       });
 
-      alert("创建成功！");
-      setShowModal(false);
+      alert("创建订单成功！");
+      setShowCreateModal(false);
 
       const data = await fetchOrders();
       setOrders(data);
+      setTab("orders");
     } catch (err) {
       console.error(err);
-      alert("创建订单失败");
+      alert("创建失败");
     }
   };
 
@@ -103,7 +132,14 @@ export default function MyOrders() {
     statusFilter === "全部" ? true : o.status === statusFilter
   );
 
-  /* ---------------- UI ---------------- */
+  /* ---------------- 商品搜索过滤 ---------------- */
+  const filteredProducts = products.filter((p) => {
+    const s = search.toLowerCase();
+    return (
+      p.name.toLowerCase().includes(s) ||
+      (p.description || "").toLowerCase().includes(s)
+    );
+  });
 
   if (loading) return <div style={{ padding: 24 }}>加载中...</div>;
 
@@ -115,7 +151,9 @@ export default function MyOrders() {
         <div style={navTitle}>我的订单</div>
 
         <div style={{ display: "flex", gap: 12 }}>
-          <button style={navBtn} onClick={() => navigate("/profile")}>资料</button>
+          <button style={navBtn} onClick={() => navigate("/profile")}>
+            资料
+          </button>
           <button
             style={{ ...navBtn, background: "#ff4d4f" }}
             onClick={() => {
@@ -128,101 +166,212 @@ export default function MyOrders() {
         </div>
       </div>
 
-      {/* 主体内容容器 */}
       <div style={contentWrapper}>
 
-        {/* 筛选栏 */}
-        <div style={filterBar}>
-          {/* 排序 */}
-          <div style={filterItem}>
-            <span>排序：</span>
-            <select style={select} value={sort} onChange={(e) => setSort(e.target.value)}>
-              <option value="time_desc">最新</option>
-              <option value="time_asc">最早</option>
-              <option value="price_desc">价格高</option>
-              <option value="price_asc">价格低</option>
-            </select>
-          </div>
-
-          {/* 状态 */}
-          <div style={filterItem}>
-            <span>状态：</span>
-            <select
-              style={select}
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="全部">全部</option>
-              <option value="待发货">待发货</option>
-              <option value="配送中">配送中</option>
-              <option value="已送达">已送达</option>
-              <option value="已完成">已完成</option>
-              <option value="用户申请退货">用户申请退货</option>
-              <option value="商家已取消">商家已取消</option>
-            </select>
-          </div>
+        {/* TAB 切换 */}
+        <div style={{ display: "flex", gap: 16, marginBottom: 20 }}>
+          <button
+            style={{ ...navBtn, background: tab === "orders" ? "#1677ff" : "#ccc" }}
+            onClick={() => setTab("orders")}
+          >
+            我的订单
+          </button>
 
           <button
-            style={createBtn}
-            onClick={() => {
-              loadCreateOrderData();
-              setShowModal(true);
-            }}
+            style={{ ...navBtn, background: tab === "products" ? "#1677ff" : "#ccc" }}
+            onClick={() => setTab("products")}
           >
-            + 创建订单
+            商品
           </button>
         </div>
 
-        {/* 订单卡片网格布局 */}
-        <div style={grid}>
-          {filteredOrders.map((o) => (
-            <div style={card} key={o._id}>
-              <div style={cardHeader}>
-                <span style={cardTitle}>{o.title}</span>
-                <span style={statusTag(o.status)}>{o.status}</span>
+        {/* ================== 订单 TAB ================== */}
+        {tab === "orders" && (
+          <>
+            <div style={filterBar}>
+              <div style={filterItem}>
+                <span>排序：</span>
+                <select
+                  style={select}
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value)}
+                >
+                  <option value="time_desc">最新</option>
+                  <option value="time_asc">最早</option>
+                  <option value="price_desc">价格高</option>
+                  <option value="price_asc">价格低</option>
+                </select>
               </div>
 
-              <div style={cardInfo}>
-                <div>价格：<b>{o.price}</b> 元</div>
-                <div>数量：{o.quantity} 件</div>
-                <div>总价：<b>{o.price * o.quantity}</b> 元</div>
-                <div style={{ color: "#888", marginTop: 6 }}>
-                  {o.createdAt ? new Date(o.createdAt).toLocaleString() : "未知"}
-                </div>
+              <div style={filterItem}>
+                <span>状态：</span>
+                <select
+                  style={select}
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="全部">全部</option>
+                  <option value="待发货">待发货</option>
+                  <option value="配送中">配送中</option>
+                  <option value="已送达">已送达</option>
+                  <option value="已完成">已完成</option>
+                  <option value="用户申请退货">用户申请退货</option>
+                  <option value="商家已取消">商家已取消</option>
+                </select>
               </div>
-
-              <Link to={`/orders/${o._id}`} style={detailBtn}>
-                查看详情 →
-              </Link>
             </div>
-          ))}
-        </div>
+
+            <div style={grid}>
+              {filteredOrders.map((o) => (
+                <div style={card} key={o._id}>
+                  <div style={cardHeader}>
+                    <span style={cardTitle}>{o.title}</span>
+                    <span style={statusTag(o.status)}>{o.status}</span>
+                  </div>
+
+                  <div style={cardInfo}>
+                    <div>价格：<b>{o.price}</b> 元</div>
+                    <div>数量：{o.quantity} 件</div>
+                    <div>总价：<b>{o.price * o.quantity}</b> 元</div>
+                    <div style={{ color: "#888", marginTop: 6 }}>
+                      {o.createdAt ? new Date(o.createdAt).toLocaleString() : "未知"}
+                    </div>
+                  </div>
+
+                  <Link to={`/orders/${o._id}`} style={detailBtn}>
+                    查看详情 →
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* ================== 商品 TAB ================== */}
+        {tab === "products" && (
+          <div
+            style={{
+              background: "#fff",
+              padding: 20,
+              borderRadius: 10,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.05)"
+            }}
+          >
+            {/* 商家选择 */}
+            <div style={{ marginBottom: 16 }}>
+              <label>选择商家：</label>
+              <select
+                style={select}
+                value={merchantId}
+                onChange={(e) => loadProducts(e.target.value)}
+              >
+                <option value="">请选择商家</option>
+                {merchants.map((m) => (
+                  <option key={m._id} value={m._id}>
+                    {m.username}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 搜索 + 创建订单按钮 */}
+            {merchantId && (
+              <div style={{
+                display: "flex",
+                gap: 10,
+                marginBottom: 20
+              }}>
+                <input
+                  style={{
+                    flex: 1,
+                    padding: 8,
+                    border: "1px solid #ccc",
+                    borderRadius: 6
+                  }}
+                  placeholder="搜索商品名称或描述…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+
+                <button
+                  style={{
+                    padding: "8px 14px",
+                    background: "#52c41a",
+                    color: "#fff",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer"
+                  }}
+                  onClick={() => setShowCreateModal(true)}
+                >
+                  创建订单
+                </button>
+              </div>
+            )}
+
+            {/* 商品列表 */}
+            {filteredProducts.length === 0 ? (
+              <div style={{ padding: 20, color: "#888" }}>暂无商品</div>
+            ) : (
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                gap: 20
+              }}>
+                {filteredProducts.map((p) => (
+                  <div key={p._id}
+                    style={{
+                      background: "#fff",
+                      borderRadius: 12,
+                      padding: 16,
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.08)"
+                    }}
+                  >
+                    <h3 style={{ margin: 0 }}>{p.name}</h3>
+                    <p>价格：¥{p.price}</p>
+                    <p style={{ fontSize: 14, color: "#666" }}>
+                      {p.description || "暂无描述"}
+                    </p>
+
+                    <button
+                      style={{
+                        marginTop: 10,
+                        width: "100%",
+                        padding: "8px 12px",
+                        background: "#1677ff",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 6,
+                        cursor: "pointer"
+                      }}
+                      onClick={() => quickBuy(p)}
+                    >
+                      秒购
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
 
-      {/* 创建订单弹窗 */}
-      {showModal && (
+      {/* ================== 创建订单弹窗 ================== */}
+      {showCreateModal && (
         <div style={modalMask}>
           <div style={modal}>
-            <h2 style={{ margin: 0 }}>创建订单</h2>
-
-            <label>商家</label>
-            <select style={input} value={merchantId} onChange={handleMerchantChange}>
-              <option value="">请选择商家</option>
-              {merchants.map((m) => (
-                <option key={m._id} value={m._id}>{m.username}</option>
-              ))}
-            </select>
+            <h2 style={{ margin: 0, marginBottom: 10 }}>创建订单</h2>
 
             <label>商品</label>
             <select
               style={input}
               value={productId}
-              disabled={!merchantId}
               onChange={(e) => setProductId(e.target.value)}
             >
               <option value="">请选择商品</option>
               {products.map((p) => (
-                <option key={p._id} value={p._id}>
+                <option value={p._id} key={p._id}>
                   {p.name} - ¥{p.price}
                 </option>
               ))}
@@ -238,13 +387,22 @@ export default function MyOrders() {
             />
 
             <label>地址</label>
-            <input style={{ ...input, background: "#eee" }} value={userAddress} readOnly />
+            <input
+              style={{ ...input, background: "#eee" }}
+              value={userAddress}
+              readOnly
+            />
 
-            <button style={modalPrimaryBtn} onClick={createOrder}>提交</button>
-            <button style={modalCancelBtn} onClick={() => setShowModal(false)}>取消</button>
+            <button style={modalPrimaryBtn} onClick={createOrder}>
+              提交
+            </button>
+            <button style={modalCancelBtn} onClick={() => setShowCreateModal(false)}>
+              取消
+            </button>
           </div>
         </div>
       )}
+
     </div>
   );
 }
@@ -291,7 +449,6 @@ const contentWrapper: React.CSSProperties = {
   padding: "0 20px",
 };
 
-/* 筛选栏 */
 const filterBar: React.CSSProperties = {
   background: "#fff",
   padding: 16,
@@ -315,17 +472,6 @@ const select: React.CSSProperties = {
   border: "1px solid #ccc",
 };
 
-const createBtn: React.CSSProperties = {
-  marginLeft: "auto",
-  padding: "8px 14px",
-  background: "#52c41a",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-};
-
-/* 订单网格 */
 const grid: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
@@ -337,12 +483,6 @@ const card: React.CSSProperties = {
   borderRadius: 12,
   padding: 18,
   boxShadow: "0 4px 15px rgba(0,0,0,0.08)",
-  transition: "0.25s",
-};
-
-(card as any)[":hover"] = {
-  transform: "translateY(-6px)",
-  boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
 };
 
 const cardHeader: React.CSSProperties = {
@@ -387,7 +527,6 @@ const detailBtn: React.CSSProperties = {
   textDecoration: "none",
 };
 
-/* 弹窗 */
 const modalMask: React.CSSProperties = {
   position: "fixed",
   left: 0,
@@ -398,10 +537,11 @@ const modalMask: React.CSSProperties = {
   display: "flex",
   justifyContent: "center",
   alignItems: "center",
+  zIndex: 999,
 };
 
 const modal: React.CSSProperties = {
-  width: 380,
+  width: 360,
   padding: 20,
   background: "#fff",
   borderRadius: 12,

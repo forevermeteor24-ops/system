@@ -152,7 +152,7 @@ export async function getOrder(req: Request, res: Response) {
   }
 }
 
-/*商家发货*/
+/* 商家发货 */
 export async function shipOrder(req: Request, res: Response) {
   try {
     const actor = (req as any).user;
@@ -169,47 +169,44 @@ export async function shipOrder(req: Request, res: Response) {
       return res.status(403).json({ error: "不能发货其他商家的订单" });
     }
 
-    // 3. 查商家地址
+    // 3. 查商家与用户地址
     const merchant = await User.findById(order.merchantId);
     if (!merchant) return res.status(404).json({ error: "商家账户不存在" });
 
-    // 商家地址
     const shopAddress = merchant.address;
+    const userAddress = order.address;
+
     if (!shopAddress?.detail) {
       return res.status(400).json({ error: "商家未设置店铺地址" });
     }
-
-    // 用户地址
-    const userAddress = order.address;
     if (!userAddress?.detail) {
       return res.status(400).json({ error: "用户收货地址无效" });
     }
 
     console.log(`[ShipDebug] 原始地址: 商家=[${shopAddress.detail}] 用户=[${userAddress.detail}]`);
 
-    // 4. 获取经纬度（优先用数据库）
+    // 4. 经纬度获取（优先DB）
     let origin = { lng: shopAddress.lng, lat: shopAddress.lat };
     let dest = { lng: userAddress.lng, lat: userAddress.lat };
 
-    // 如果没有经纬度，才调用 geocode
+    // 商家经纬度
     if (!origin.lng || !origin.lat) {
       console.log("[ShipDebug] 商家经纬度缺失 -> 调用 geocode");
       const geo = await geocodeAddress(shopAddress.detail);
-      origin = geo;
-
       merchant.address.lng = geo.lng;
       merchant.address.lat = geo.lat;
       await merchant.save();
+      origin = geo;
     }
 
+    // 用户经纬度
     if (!dest.lng || !dest.lat) {
       console.log("[ShipDebug] 用户经纬度缺失 -> 调用 geocode");
       const geo = await geocodeAddress(userAddress.detail);
-      dest = geo;
-
       order.address.lng = geo.lng;
       order.address.lat = geo.lat;
       await order.save();
+      dest = geo;
     }
 
     console.log("[ShipDebug] 使用经纬度:", { origin, dest });
@@ -218,13 +215,17 @@ export async function shipOrder(req: Request, res: Response) {
     const route = await planRoute(origin, dest);
     const points = parseRouteToPoints(route);
 
-    // 6. 启动模拟
-    startTrack(orderId, points);
-
+    // ---------------------------------------------------------------------
+    // ❗❗❗ 关键修复：先保存路线 + 状态，再启动轨迹模拟（否则前端拿不到路线）
+    // ---------------------------------------------------------------------
     order.status = "配送中";
+    order.routePoints = points as any;          // ⭐ 前端需要这个来画路径和小车初始位置
     await order.save();
 
-    console.log("[ShipDebug] 发货成功！");
+    // 6. 启动模拟器（推送 WS 位置）
+    startTrack(orderId, points);
+
+    console.log("[ShipDebug] 发货成功 & 轨迹模拟启动！");
     return res.json(order);
 
   } catch (err: any) {
@@ -235,6 +236,7 @@ export async function shipOrder(req: Request, res: Response) {
     });
   }
 }
+
 
 
 

@@ -15,8 +15,8 @@ export class TrackPlayer {
   private isPlaying = false;
   private stopped = false;
 
-  /** 小车速度（米/秒） */
-  private speed = 8; // 建议真实速度 5–12 m/s
+  /** 小车速度（米/秒）*/
+  private speed = 8;
 
   constructor(orderId: string, wss: any) {
     this.orderId = orderId;
@@ -37,7 +37,7 @@ export class TrackPlayer {
     }
   }
 
-  /** 保存进度到 DB */
+  /** 保存进度 */
   private async saveState() {
     const i = Math.max(0, Math.min(this.index, this.points.length - 1));
     await OrderModel.updateOne(
@@ -61,7 +61,6 @@ export class TrackPlayer {
     this.points = points;
     this.stopped = false;
 
-    // 恢复进度
     await this.restoreState();
 
     // 计算 ETA（秒）
@@ -90,7 +89,7 @@ export class TrackPlayer {
     this.nextTick();
   }
 
-  /** 当前状态（给前端可选使用） */
+  /** 当前状态（可选） */
   getCurrentState() {
     const i = Math.max(0, Math.min(this.index, this.points.length - 1));
     return {
@@ -101,14 +100,14 @@ export class TrackPlayer {
     };
   }
 
-  /** 推进位置 */
+  /** 逐步推进 */
   private async nextTick() {
     if (!this.isPlaying || this.stopped) return;
 
+    // 已送达
     if (this.index >= this.points.length) {
       const final = this.points[this.points.length - 1] || null;
 
-      // 广播最终位置
       this.broadcast({
         type: "location",
         finished: true,
@@ -118,12 +117,11 @@ export class TrackPlayer {
         position: final,
       });
 
-      // 更新订单状态为 已送达
       await OrderModel.updateOne(
         { _id: this.orderId },
-        { $set: { status: "已送达" },
-          deliveredAt: Date.now()   // ⭐ 新增字段（用于计算配送时效） 
-          }
+        {
+          $set: { status: "已送达", deliveredAt: Date.now() }
+        }
       );
 
       console.log(`✔ 订单 ${this.orderId} 已送达`);
@@ -133,9 +131,10 @@ export class TrackPlayer {
       return;
     }
 
+    // 当前点
     const p = this.points[this.index];
 
-    // 广播当前位置
+    // 广播前端
     this.broadcast({
       type: "location",
       orderId: this.orderId,
@@ -145,12 +144,29 @@ export class TrackPlayer {
       finished: false,
     });
 
+    // 计算下一段距离（米）
+    let distanceToNext = 0;
+    if (this.index < this.points.length - 1) {
+      distanceToNext = calcTotalDistance([
+        this.points[this.index],
+        this.points[this.index + 1],
+      ]);
+    }
+
+    // 防止 0 距离异常
+    if (!distanceToNext || distanceToNext < 0.1) {
+      distanceToNext = 1;
+    }
+
+    // 计算下一跳时间 = 距离（米）/ 速度（米/秒）
+    const delay = (distanceToNext / this.speed) * 1000;
+
     this.index++;
 
-    // 每 5 个点保存一次
+    // 每 5 步保存一次
     if (this.index % 5 === 0) await this.saveState();
 
-    setTimeout(() => this.nextTick(), 1000); // 每秒走一步（你可以改速度）
+    setTimeout(() => this.nextTick(), delay);
   }
 
   pause() {
@@ -169,7 +185,7 @@ export class TrackPlayer {
     this.stopped = true;
   }
 
-  /** 只推送给订阅该订单的客户端 */
+  /** 推送给订阅客户端 */
   private broadcast(msg: any) {
     if (!this.wss?.clients) return;
 

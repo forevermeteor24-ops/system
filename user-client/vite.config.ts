@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "associations-madonna-naval-closer.trycloudflare.com"
+      "created-legislative-correctly-rentals.trycloudflare.com"
     ],
   },
 });

@@ -29,13 +29,28 @@ export default function OrderDetail() {
     let mounted = true;
 
     (async () => {
-      const o = await fetchOrder(id);
+      // 注意：把返回的 order 强制为 any，避免 TS 报 o.routePoints 不存在的错误
+      const o: any = await fetchOrder(id);
       if (!mounted) return;
-      setOrder(o);
 
-      if (o.expectedArrival) setEtaText(formatRemainingETA(o.expectedArrival));
+      // 如果后端 routePoints/eta 已存在，我们把 eta 转成一个到达时间（ms）
+      let enhancedOrder = { ...o };
+      if (typeof o.eta === "number") {
+        const arrivalTime = Date.now() + o.eta * 1000; // eta 是秒
+        enhancedOrder.etaArrivalTime = arrivalTime;
+        setEtaText(formatRemainingETA(arrivalTime));
+      } else if (o.expectedArrival) {
+        // 如果后端意外返回 expectedArrival（依旧兼容）
+        enhancedOrder.etaArrivalTime = new Date(o.expectedArrival).getTime();
+        setEtaText(formatRemainingETA(enhancedOrder.etaArrivalTime));
+      } else {
+        // 没有任何 ETA 信息则显示 --
+        setEtaText("--");
+      }
 
-      // 地图准备好
+      setOrder(enhancedOrder);
+
+      // 等待地图容器渲染
       await new Promise<void>((resolve) => {
         const wait = () => (mapRef.current ? resolve() : requestAnimationFrame(wait));
         wait();
@@ -46,11 +61,9 @@ export default function OrderDetail() {
         new AMap.Map(mapRef.current!, { zoom: 14 });
       mapInstanceRef.current = map;
 
-      // ---- 不再请求后端路线，直接使用 o.routePoints ----
-      if (o.routePoints?.length > 0) {
-        const path = o.routePoints.map(
-          (p: any) => new AMap.LngLat(p.lng, p.lat)
-        );
+      // ---- 不再请求后端路线，直接使用 o.routePoints（安全校验） ----
+      if (Array.isArray(o.routePoints) && o.routePoints.length > 0) {
+        const path = o.routePoints.map((p: any) => new AMap.LngLat(p.lng, p.lat));
 
         const polyline = new AMap.Polyline({
           path,
@@ -61,14 +74,28 @@ export default function OrderDetail() {
 
         map.setFitView([polyline]);
 
-        // 初始化骑手/小车 marker
+        // ----- 小车 marker -----
+        let startPos = path[0];           // 默认起点
+        let endPos = path[path.length - 1]; // 终点
+
+        if (markerRef.current) {
+          markerRef.current.setMap(null);
+        }
+
         const marker = new AMap.Marker({
-          position: path[0],
+          position: o.status === "已送达" ? endPos : startPos,
           icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png",
           offset: new AMap.Pixel(-13, -30),
         });
         map.add(marker);
         markerRef.current = marker;
+      } else {
+        // 如果没有 routePoints，可选：把地图中心设置到订单 origin 或目标（若后端提供）
+        if (o.origin?.lng && o.origin?.lat) {
+          map.setCenter([o.origin.lng, o.origin.lat]);
+        } else if (o.address?.lng && o.address?.lat) {
+          map.setCenter([o.address.lng, o.address.lat]);
+        }
       }
     })();
 
@@ -97,6 +124,7 @@ export default function OrderDetail() {
         return;
       }
 
+      // 仅处理位置更新消息：设置 marker 位置
       if (msg.type === "location" && msg.position) {
         markerRef.current?.setPosition(
           new AMap.LngLat(msg.position.lng, msg.position.lat)
@@ -104,26 +132,37 @@ export default function OrderDetail() {
       }
     };
 
-    return () => ws.close();
+    return () => {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+    };
   }, [order?.status]);
 
-  /* ------------------------ ETA 刷新 ------------------------ */
+  /* ------------------------ ETA 刷新（基于 etaArrivalTime） ------------------------ */
   useEffect(() => {
-    if (!order?.expectedArrival) return;
-    const updateETA = () =>
-      setEtaText(formatRemainingETA(order.expectedArrival));
+    if (!order?.etaArrivalTime) return;
+
+    const updateETA = () => {
+      setEtaText(formatRemainingETA(order.etaArrivalTime));
+    };
+
     updateETA();
-    const timer = setInterval(updateETA, 60000);
+    const timer = setInterval(updateETA, 60 * 1000); // 每分钟刷新
     return () => clearInterval(timer);
-  }, [order?.expectedArrival]);
+  }, [order?.etaArrivalTime]);
 
   /* ------------------------ 商家操作 ------------------------ */
   async function handleShip() {
     try {
       const updated = await shipOrder(order._id);
+      // 发货后后端应该返回带有 routePoints / eta 等的 order，所以把它 set 回去
       setOrder(updated);
       alert("🚚 已发货！");
-    } catch {
+    } catch (err) {
+      console.error("ship failed:", err);
       alert("发货失败");
     }
   }
@@ -151,10 +190,11 @@ export default function OrderDetail() {
         <>
           <p><b>ID：</b>{order._id}</p>
           <p><b>商品：</b>{order.title}</p>
-          <p><b>地址：</b>{order.address.detail}</p>
+          <p><b>地址：</b>{order.address?.detail}</p>
           <p><b>状态：</b>{order.status}</p>
 
-          {order.expectedArrival && (
+          {/* 显示基于 eta 计算出的剩余时间（如果有） */}
+          {order.etaArrivalTime && (
             <p>
               <b>预计送达：</b>{etaText}
             </p>

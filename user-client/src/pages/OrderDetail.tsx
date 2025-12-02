@@ -1,12 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import {
-  fetchOrder,
-  requestRoute,
-  updateStatus,
-  deleteOrder,
-} from "../api/orders";
-import { formatRemainingETA } from "../utils/formatETA"
+import { fetchOrder, updateStatus, deleteOrder } from "../api/orders";
+import { formatRemainingETA } from "../utils/formatETA";
+
 declare const AMap: any;
 
 export default function OrderDetail() {
@@ -15,18 +11,15 @@ export default function OrderDetail() {
 
   const [order, setOrder] = useState<any>(null);
   const [remainingTime, setRemainingTime] = useState<string>("--");
-  const [routePoints, setRoutePoints] = useState<any[]>([]);
-  const [routeLoaded, setRouteLoaded] = useState(false);
-  const [fitViewDone, setFitViewDone] = useState(false);
 
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
-  /* ------------------ 获取订单 & 初始化地图 ------------------ */
+  /* ------------------ 获取订单 ------------------ */
   useEffect(() => {
     if (!id) return;
+
     let mounted = true;
 
     (async () => {
@@ -35,47 +28,48 @@ export default function OrderDetail() {
         if (!mounted) return;
         setOrder(o);
 
-        // 初始化地图
+        // 地图初始化
         await new Promise<void>((resolve) => {
-          const wait = () =>
-            mapRef.current ? resolve() : requestAnimationFrame(wait);
+          const wait = () => (mapRef.current ? resolve() : requestAnimationFrame(wait));
           wait();
         });
 
         const map =
           mapInstanceRef.current ||
-          new AMap.Map(mapRef.current!, { zoom: 14, center: [116.397428, 39.90923] });
+          new AMap.Map(mapRef.current!, { zoom: 12 });
+
         mapInstanceRef.current = map;
 
-        const r = await requestRoute(o._id);
+        // 路线绘制
+        if (o.routePoints && o.routePoints.length > 0) {
+          const path = o.routePoints.map((p: any) => new AMap.LngLat(p.lng, p.lat));
 
-        if (r?.points?.length > 0) {
-          setRoutePoints(r.points);
-          setRouteLoaded(true);
-          map.setCenter([r.origin.lng, r.origin.lat]);
+          const polyline = new AMap.Polyline({
+            path,
+            strokeWeight: 6,
+            strokeColor: "#1677ff",
+            showDir: true,
+          });
 
-          const path = r.points.map((p: any) => new AMap.LngLat(p.lng, p.lat));
-          const polyline = new AMap.Polyline({ path, strokeWeight: 5, showDir: true });
           map.add(polyline);
+          map.setFitView([polyline]);
 
-          if (!fitViewDone) {
-            map.setFitView([polyline]);
-            setFitViewDone(true);
-          }
+          // Marker
+          const startPos = path[0];
+          const endPos = path[path.length - 1];
 
           const marker = new AMap.Marker({
-            position: path[0],
+            position: o.status === "已送达" ? endPos : startPos,
             icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png",
             offset: new AMap.Pixel(-13, -30),
           });
+
           map.add(marker);
           markerRef.current = marker;
-        } else {
-          alert("路径规划失败，请检查数据！");
         }
       } catch (err) {
         console.error("获取订单失败", err);
-        alert("订单数据加载失败，请稍后重试！");
+        alert("订单获取失败");
         navigate("/orders");
       }
     })();
@@ -87,64 +81,28 @@ export default function OrderDetail() {
 
   /* ------------------ 剩余时间更新 ------------------ */
   useEffect(() => {
-    if (!order || !order.eta) return;
-    setRemainingTime(formatRemainingETA(order.eta));
+    if (!order?.expectedArrival) return;
 
-    const interval = setInterval(() => {
-      setRemainingTime(formatRemainingETA(order.eta));
-    }, 60 * 1000); // 每分钟刷新一次
+    setRemainingTime(formatRemainingETA(order.expectedArrival));
 
-    return () => clearInterval(interval);
+    const t = setInterval(() => {
+      setRemainingTime(formatRemainingETA(order.expectedArrival));
+    }, 60000);
+
+    return () => clearInterval(t);
   }, [order]);
 
-  /* ------------------ WebSocket 实时配送 ------------------ */
-  useEffect(() => {
+  /* ------------------ 操作按钮 ------------------ */
+  async function handleConfirmDelivered() {
     if (!order) return;
-    if (order.status !== "配送中") return;
-    if (!routeLoaded) return;
+    await updateStatus(order._id, "已完成");
+    setOrder({ ...order, status: "已完成" });
+  }
 
-    const ws = new WebSocket("wss://system-backend.zeabur.app");
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
-      ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
-    };
-
-    ws.onmessage = (ev) => {
-      let msg;
-      try {
-        msg = JSON.parse(ev.data);
-      } catch { return; }
-
-      if (msg.type === "location" && msg.position) {
-        markerRef.current?.setPosition(new AMap.LngLat(msg.position.lng, msg.position.lat));
-      }
-
-      if (msg.type === "current-state" && msg.position && markerRef.current) {
-        markerRef.current.setPosition(new AMap.LngLat(msg.position.lng, msg.position.lat));
-        if (msg.index < msg.total - 1) {
-          ws.send(JSON.stringify({ type: "start-track", orderId: order._id, points: routePoints }));
-        }
-      }
-
-      if (msg.type === "no-track") {
-        ws.send(JSON.stringify({ type: "start-track", orderId: order._id, points: routePoints }));
-      }
-    };
-
-    return () => ws.close();
-  }, [order?.status, routeLoaded, routePoints]);
-
-  async function handleReturnRequest() {
+  async function handleReturn() {
     if (!order) return;
-    try {
-      await updateStatus(order._id, "用户申请退货");
-      setOrder({ ...order, status: "用户申请退货" });
-      alert("已提交退货请求");
-    } catch {
-      alert("退货失败，请稍后重试");
-    }
+    await updateStatus(order._id, "用户申请退货");
+    setOrder({ ...order, status: "用户申请退货" });
   }
 
   async function handleDelete() {
@@ -154,40 +112,251 @@ export default function OrderDetail() {
     navigate("/orders");
   }
 
+  /* ------------------ 时间线数据 ------------------ */
+  const timelineOrder = ["待发货", "配送中", "已送达", "已完成"];
+  const activeIndex = order ? timelineOrder.indexOf(order.status) : -1;
+
+  const timelineItems = timelineOrder.map((name, i) => ({
+    name,
+    desc:
+      name === "待发货"
+        ? "商家正在准备发货"
+        : name === "配送中"
+        ? "快递员正在配送，请保持电话畅通"
+        : name === "已送达"
+        ? "包裹已送达"
+        : "订单已完成",
+    time:
+      name === "已送达" && order?.deliveredAt
+        ? new Date(order.deliveredAt).toLocaleString()
+        : "",
+    active: i <= activeIndex,
+  }));
+
   return (
-    <div>
-      <h2>订单详情</h2>
+    <div style={layout}>
+      {/* ---------------- 左侧 ---------------- */}
+      <div style={left}>
+        {order && (
+          <>
+            {/* 订单详情卡片 */}
+            <div style={card}>
+              <h2 style={cardTitle}>订单详情</h2>
 
-      {!order ? (
-        <p>加载中...</p>
-      ) : (
-        <>
-          <p><b>ID：</b>{order._id}</p>
-          <p><b>商品：</b>{order.title}</p>
-          <p><b>数量：</b>{order.quantity || 1}</p>
-          <p><b>单价：</b>¥{order.price}</p>
-          <p><b>总价：</b>¥{(order.price || 0) * (order.quantity || 1)}</p>
-          <p><b>剩余时间：</b>{remainingTime}</p>
-          <p><b>客户地址：</b>{order.address.detail}</p>
-          <p><b>状态：</b>{order.status}</p>
+              <div style={row}>商品：{order.title}</div>
+              <div style={row}>数量：{order.quantity}</div>
+              <div style={row}>单价：¥{order.price}</div>
+              <div style={row}>总价：¥{order.totalPrice}</div>
 
-          {(order.status === "配送中" || order.status === "待发货") && (
-            <button onClick={handleReturnRequest} style={{ background: "#ff4d4d", padding: "8px 18px", color: "#fff" }}>
-              申请退货
-            </button>
-          )}
+              <div style={row}>
+                剩余时间：{order.expectedArrival ? remainingTime : "--"}
+              </div>
 
-          {order.status === "已送达" && (
-            <button onClick={handleDelete} style={{ background: "#4caf50", padding: "8px 18px", color: "#fff" }}>
-              删除订单
-            </button>
-          )}
+              <div style={row}>地址：{order.address.detail}</div>
 
-          <div ref={mapRef} style={{ height: 420, marginTop: 16, borderRadius: 8, border: "1px solid #eee" }} />
+              <div style={statusLabel(order.status)}>
+                状态：{order.status}
+              </div>
 
-          <Link to="/orders" style={{ color: "#1677ff" }}>← 返回我的订单</Link>
-        </>
-      )}
+              {/* 操作按钮 */}
+              <div style={{ marginTop: 16 }}>
+                {order.status === "已送达" && (
+                  <button style={btnBlue} onClick={handleConfirmDelivered}>
+                    确认收货
+                  </button>
+                )}
+
+                {(order.status === "配送中" ||
+                  order.status === "待发货") && (
+                  <button style={btnRed} onClick={handleReturn}>
+                    申请退货
+                  </button>
+                )}
+
+                {(order.status === "已完成" ||
+                  order.status === "商家已取消") && (
+                  <button style={btnGrey} onClick={handleDelete}>
+                    删除订单
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 特殊状态提示 */}
+            {(order.status === "商家已取消" ||
+              order.status === "用户申请退货") && (
+              <div style={card}>
+                <h3 style={{ marginTop: 0 }}>提示</h3>
+                <div style={{ color: "#ff4d4f" }}>
+                  {order.status === "商家已取消"
+                    ? "商家已取消订单"
+                    : "用户已申请退货，请等待商家处理"}
+                </div>
+              </div>
+            )}
+
+            {/* 时间线卡片 */}
+            <div style={card}>
+              <h3 style={cardTitle}>物流状态</h3>
+
+              {timelineItems.map((item, idx) => (
+                <div key={idx} style={timelineRow}>
+                  <div>
+                    <div
+                      style={{
+                        ...dot,
+                        background: item.active ? "#1677ff" : "#ccc",
+                      }}
+                    ></div>
+                    {idx < timelineItems.length - 1 && (
+                      <div
+                        style={{
+                          ...line,
+                          background: item.active ? "#1677ff" : "#ccc",
+                        }}
+                      ></div>
+                    )}
+                  </div>
+
+                  <div style={{ marginLeft: 12 }}>
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: item.active ? 600 : 500,
+                        color: item.active ? "#1677ff" : "#444",
+                      }}
+                    >
+                      {item.name}
+                    </div>
+                    <div style={{ marginTop: 4, color: "#666" }}>
+                      {item.desc}
+                    </div>
+                    {item.time && (
+                      <div style={{ marginTop: 4, color: "#999", fontSize: 12 }}>
+                        {item.time}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ---------------- 右侧地图 ---------------- */}
+      <div style={right}>
+        <div
+          ref={mapRef}
+          style={{
+            width: "100%",
+            height: "100%",
+            borderRadius: 10,
+            border: "1px solid #ddd",
+          }}
+        />
+      </div>
     </div>
   );
 }
+
+/* ------------------ 样式 ------------------ */
+
+const layout: React.CSSProperties = {
+  display: "flex",
+  height: "100vh",
+  gap: 16,
+  padding: 16,
+  boxSizing: "border-box",
+};
+
+const left: React.CSSProperties = {
+  width: "40%",
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+  overflowY: "auto",
+};
+
+const right: React.CSSProperties = {
+  width: "60%",
+};
+
+const card: React.CSSProperties = {
+  background: "#fff",
+  padding: 20,
+  borderRadius: 10,
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+};
+
+const cardTitle: React.CSSProperties = {
+  margin: 0,
+  marginBottom: 16,
+};
+
+const row: React.CSSProperties = {
+  marginBottom: 6,
+};
+
+const btnBlue: React.CSSProperties = {
+  padding: "8px 14px",
+  background: "#1677ff",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  cursor: "pointer",
+  marginRight: 8,
+};
+
+const btnRed: React.CSSProperties = {
+  padding: "8px 14px",
+  background: "#ff4d4f",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  cursor: "pointer",
+  marginRight: 8,
+};
+
+const btnGrey: React.CSSProperties = {
+  padding: "8px 14px",
+  background: "#999",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  cursor: "pointer",
+};
+
+const statusLabel = (status: string): React.CSSProperties => ({
+  marginTop: 10,
+  display: "inline-block",
+  padding: "4px 10px",
+  borderRadius: 6,
+  color: "#fff",
+  background:
+    status === "待发货"
+      ? "#faad14"
+      : status === "配送中"
+      ? "#1677ff"
+      : status === "已送达"
+      ? "#52c41a"
+      : "#666",
+});
+
+const timelineRow: React.CSSProperties = {
+  display: "flex",
+  marginBottom: 24,
+};
+
+const dot: React.CSSProperties = {
+  width: 14,
+  height: 14,
+  borderRadius: "50%",
+};
+
+const line: React.CSSProperties = {
+  width: 2,
+  height: 32,
+  marginLeft: 6,
+};
+

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import * as echarts from "echarts";
 
 // ----------- 类型定义 -----------
-type HeatPoint = [number, number, number]; // x, y, value
+type HeatPoint = [number, number, number];
 
 type DeliveryStats = {
   avgDeliveryTime: number;
@@ -15,32 +15,45 @@ type AbnormalOrder = {
   eta: number;
 };
 
-// ----------- 组件主体 -----------
+const BASE = "https://system-backend.zeabur.app";
 
 export default function Dashboard() {
-
   const [heatmap, setHeatmap] = useState<HeatPoint[]>([]);
   const [deliveryStats, setDeliveryStats] = useState<DeliveryStats | null>(null);
   const [abnormalOrders, setAbnormalOrders] = useState<AbnormalOrder[]>([]);
 
   // ----------- 获取数据 -----------
   useEffect(() => {
-    const token = localStorage.getItem("token")!;
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.error("Token 不存在，请重新登录！");
+      return;
+    }
 
-    fetch("/api/dashboard/heatmap", { headers: { Authorization: token } })
-      .then(r => r.json())
-      .then(d => setHeatmap(d.points));
+    const headers = {
+      Authorization: `Bearer ${token}`
+    };
 
-    fetch("/api/dashboard/delivery-stats", { headers: { Authorization: token } })
+    // Heatmap
+    fetch(`${BASE}/api/dashboard/heatmap`, { headers })
       .then(r => r.json())
-      .then(d => setDeliveryStats(d));
+      .then(d => setHeatmap(d.points || []))
+      .catch(err => console.error("加载 heatmap 失败", err));
 
-    fetch("/api/dashboard/abnormal-orders", { headers: { Authorization: token } })
+    // Delivery stats
+    fetch(`${BASE}/api/dashboard/delivery-stats`, { headers })
       .then(r => r.json())
-      .then(d => setAbnormalOrders(d.abnormal));
+      .then(d => setDeliveryStats(d))
+      .catch(err => console.error("加载 stats 失败", err));
+
+    // Abnormal orders
+    fetch(`${BASE}/api/dashboard/abnormal-orders`, { headers })
+      .then(r => r.json())
+      .then(d => setAbnormalOrders(d.abnormal || []))
+      .catch(err => console.error("加载 abnormal 失败", err));
   }, []);
 
-  // ----------- 渲染热力图（你截图中的代码） -----------
+  // ----------- 渲染热力图 -----------
   useEffect(() => {
     if (!heatmap.length) return;
 

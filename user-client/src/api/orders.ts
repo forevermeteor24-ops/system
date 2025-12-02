@@ -36,6 +36,7 @@ export interface Order {
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
+  routePoints?: { lng: number; lat: number}[];
 }
 
 /* ===========================

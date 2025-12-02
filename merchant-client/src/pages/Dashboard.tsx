@@ -37,24 +37,30 @@ export default function Dashboard() {
         };
 
         // 1. 热力图
-        const heatRes = await fetch(`${BASE}/api/dashboard/heatmap`, {
-          headers
-        });
+        console.log("Fetching heatmap...");
+        const heatRes = await fetch(`${BASE}/api/dashboard/heatmap`, { headers });
+        console.log("Heatmap response status:", heatRes.status);
+        if (!heatRes.ok) throw new Error("Failed to fetch heatmap");
         const heatData = await heatRes.json();
+        console.log("Heatmap data:", heatData);
         setHeatmap(heatData.points || []);
 
         // 2. 配送时效
-        const statRes = await fetch(`${BASE}/api/dashboard/delivery-stats`, {
-          headers
-        });
+        console.log("Fetching delivery stats...");
+        const statRes = await fetch(`${BASE}/api/dashboard/delivery-stats`, { headers });
+        console.log("Delivery stats response status:", statRes.status);
+        if (!statRes.ok) throw new Error("Failed to fetch delivery stats");
         const stats = await statRes.json();
+        console.log("Delivery stats data:", stats);
         setDeliveryStats(stats);
 
         // 3. 异常订单
-        const abnRes = await fetch(`${BASE}/api/dashboard/abnormal-orders`, {
-          headers
-        });
+        console.log("Fetching abnormal orders...");
+        const abnRes = await fetch(`${BASE}/api/dashboard/abnormal-orders`, { headers });
+        console.log("Abnormal orders response status:", abnRes.status);
+        if (!abnRes.ok) throw new Error("Failed to fetch abnormal orders");
         const abnormal = await abnRes.json();
+        console.log("Abnormal orders data:", abnormal);
         setAbnormalOrders(abnormal.abnormal || []);
 
       } catch (err) {

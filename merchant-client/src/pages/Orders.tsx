@@ -12,7 +12,6 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  // 你项目里可能没有导出 Product 类型，这里假设没有也没关系
 } from "../api/products";
 
 type ProductItem = {
@@ -28,18 +27,15 @@ export default function MerchantHome() {
   const [merchantId, setMerchantId] = useState<string>("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
-
   const [loading, setLoading] = useState(true);
   const [showProductModal, setShowProductModal] = useState(false);
 
-  // 编辑态或创建态复用
   const [productToEdit, setProductToEdit] = useState<ProductItem | null>(null);
   const [newProduct, setNewProduct] = useState<{ name: string; price: number }>({
     name: "",
     price: 0,
   });
 
-  // 读取 merchantId（登录时应已写入 localStorage）
   useEffect(() => {
     const id = localStorage.getItem("merchantId");
     if (!id) {
@@ -49,7 +45,6 @@ export default function MerchantHome() {
     setMerchantId(id);
   }, [navigate]);
 
-  // merchantId 可用后加载数据
   useEffect(() => {
     if (!merchantId) return;
     loadProducts();
@@ -72,8 +67,6 @@ export default function MerchantHome() {
   const loadOrders = async () => {
     setLoading(true);
     try {
-      // 你的 orders API 可能不需要 merchantId；若需要则传 merchantId
-      // const list = await fetchOrders(merchantId);
       const list = await fetchOrders();
       setOrders(list);
     } catch (err) {
@@ -85,30 +78,25 @@ export default function MerchantHome() {
   };
 
   /* ---------------- 商品操作 ---------------- */
-  // 打开创建弹窗
   const openCreateModal = () => {
     setProductToEdit(null);
     setNewProduct({ name: "", price: 0 });
     setShowProductModal(true);
   };
 
-  // 打开编辑弹窗（把后端的 product 塞进编辑态）
   const openEditModal = (p: ProductItem) => {
     setProductToEdit({ ...p }); // clone
     setShowProductModal(true);
   };
 
-  // 创建商品（注意：断言为 any，避免 TS 报 merchantId 非法）
   const handleCreateProduct = async () => {
     if (!newProduct.name || !newProduct.price) {
       return alert("请输入商品名称和价格");
     }
 
     try {
-      // 这里断言为 any，让 TS 放行 merchantId 字段
       const payload = { ...newProduct, merchantId } as any;
       const created = await createProduct(payload);
-      // 如果 API 返回新商品对象，append；否则 reload
       if (created && created._id) {
         setProducts((ps) => [...ps, created]);
       } else {
@@ -122,7 +110,6 @@ export default function MerchantHome() {
     }
   };
 
-  // 更新商品（同样做断言）
   const handleUpdateProduct = async () => {
     if (!productToEdit) return;
     if (!productToEdit.name || !productToEdit.price) {
@@ -206,52 +193,44 @@ export default function MerchantHome() {
     setProductToEdit((p) => (p ? { ...p, [name]: name === "price" ? Number(value) : value } : p));
   };
 
-  /* ---------------- 渲染 ---------------- */
   return (
-    <div style={{ padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <div className="merchant-dashboard">
+      <header className="header">
         <h2>商家后台</h2>
         <div>
-          <button
-             onClick={() => navigate("/dashboard")}
-             style={{ marginRight: 10 }}
-          >
+          <button onClick={() => navigate("/dashboard")} className="btn btn-primary">
             数据可视化看板
           </button>
-          
           <button
             onClick={() => {
               localStorage.removeItem("token");
               localStorage.removeItem("merchantId");
               navigate("/login");
             }}
+            className="btn btn-secondary"
           >
             退出登录
           </button>
         </div>
-      </div>
+      </header>
 
-      <p>商家ID：{merchantId}</p>
+      <p className="merchant-id">商家ID：{merchantId}</p>
 
-      <section style={{ marginTop: 20 }}>
+      <section className="products-section">
         <h3>商品管理</h3>
-        <button onClick={openCreateModal}>创建商品</button>
-        <div style={{ marginTop: 12 }}>
+        <button className="btn btn-primary" onClick={openCreateModal}>创建商品</button>
+        <div className="product-list">
           {products.length === 0 ? (
             <p>暂无商品</p>
           ) : (
             products.map((p) => (
-              <div key={p._id} style={{ padding: 8, border: "1px solid #eee", marginBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <strong>{p.name}</strong> — ¥{p.price}
-                  </div>
-                  <div>
-                    <button onClick={() => openEditModal(p)}>编辑</button>
-                    <button onClick={() => handleDeleteProduct(p._id)} style={{ marginLeft: 8 }}>
-                      删除
-                    </button>
-                  </div>
+              <div key={p._id} className="product-card">
+                <div className="product-info">
+                  <strong>{p.name}</strong> — ¥{p.price}
+                </div>
+                <div className="product-actions">
+                  <button className="btn btn-warning" onClick={() => openEditModal(p)}>编辑</button>
+                  <button className="btn btn-danger" onClick={() => handleDeleteProduct(p._id)}>删除</button>
                 </div>
               </div>
             ))
@@ -259,26 +238,25 @@ export default function MerchantHome() {
         </div>
       </section>
 
-      <section style={{ marginTop: 24 }}>
+      <section className="orders-section">
         <h3>订单管理</h3>
         {orders.length === 0 ? (
           <p>暂无订单</p>
         ) : (
           orders.map((o) => (
-            <div key={o._id} style={{ padding: 10, border: "1px solid #eee", marginBottom: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <div>
-                  <strong>{o.title}</strong>
-                  <div>数量：{o.quantity}，单价：¥{o.price}，总价：¥{o.totalPrice}</div>
-                  <div>地址：{o.address?.detail}</div>
-                </div>
-                <div>
-                  <div>状态：{o.status}</div>
-                  <div style={{ marginTop: 8 }}>
-                    {o.status === "待发货" && <button onClick={() => doShip(o._id)}>发货</button>}
-                    {o.status === "用户申请退货" && <button onClick={() => doCancelByMerchant(o._id)}>取消订单</button>}
-                    {(o.status === "已送达" || o.status === "商家已取消") && <button onClick={() => doDelete(o._id)}>删除</button>}
-                  </div>
+            <div key={o._id} className="order-card">
+              <div className="order-info">
+                <strong>{o.title}</strong>
+                <div>数量：{o.quantity}，单价：¥{o.price}，总价：¥{o.totalPrice}</div>
+                <div>地址：{o.address?.detail}</div>
+              </div>
+              <div className="order-actions">
+                <div>状态：{o.status}</div>
+                <div className="order-btns">
+                  {o.status === "待发货" && <button className="btn btn-success" onClick={() => doShip(o._id)}>发货</button>}
+                  {o.status === "用户申请退货" && <button className="btn btn-danger" onClick={() => doCancelByMerchant(o._id)}>取消订单</button>}
+                  {(o.status === "已送达" || o.status === "商家已取消") && <button className="btn btn-danger" onClick={() => doDelete(o._id)}>删除</button>}
+                  <Link to={`/order/${o._id}`} className="btn btn-info">查看详情</Link>
                 </div>
               </div>
             </div>
@@ -288,18 +266,8 @@ export default function MerchantHome() {
 
       {/* 商品创建/编辑弹窗 */}
       {showProductModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(0,0,0,0.4)",
-            zIndex: 9999,
-          }}
-        >
-          <div style={{ background: "#fff", padding: 20, width: 360, borderRadius: 8 }}>
+        <div className="modal-overlay">
+          <div className="modal">
             <h3>{productToEdit ? "编辑商品" : "创建商品"}</h3>
 
             {productToEdit ? (
@@ -313,9 +281,9 @@ export default function MerchantHome() {
                   <input name="price" type="number" value={productToEdit.price} onChange={onEditProductChange} />
                 </div>
 
-                <div style={{ marginTop: 12 }}>
-                  <button onClick={handleUpdateProduct}>保存</button>
-                  <button onClick={() => { setShowProductModal(false); setProductToEdit(null); }} style={{ marginLeft: 8 }}>
+                <div className="modal-actions">
+                  <button className="btn btn-success" onClick={handleUpdateProduct}>保存</button>
+                  <button className="btn btn-secondary" onClick={() => { setShowProductModal(false); setProductToEdit(null); }}>
                     取消
                   </button>
                 </div>
@@ -331,9 +299,9 @@ export default function MerchantHome() {
                   <input name="price" type="number" value={newProduct.price} onChange={onNewProductChange} />
                 </div>
 
-                <div style={{ marginTop: 12 }}>
-                  <button onClick={handleCreateProduct}>创建</button>
-                  <button onClick={() => { setShowProductModal(false); setNewProduct({ name: "", price: 0 }); }} style={{ marginLeft: 8 }}>
+                <div className="modal-actions">
+                  <button className="btn btn-success" onClick={handleCreateProduct}>创建</button>
+                  <button className="btn btn-secondary" onClick={() => { setShowProductModal(false); setNewProduct({ name: "", price: 0 }); }}>
                     取消
                   </button>
                 </div>

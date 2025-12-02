@@ -4,6 +4,7 @@ import type { Address } from "./orders";
 export interface Profile {
   _id: string;
   username: string;
+  phone?: string;
   role: "user" | "merchant";
   address: Address;
 }
@@ -27,6 +28,7 @@ export async function fetchProfile(): Promise<Profile> {
 /* 更新当前用户信息 */
 export async function updateProfile(payload: {
   username?: string;
+  phone?: string;
   address?: {
     detail: string;
     lng: number | null;

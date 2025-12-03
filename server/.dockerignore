@@ -1,0 +1,24 @@
+# 依赖
+node_modules
+npm-debug.log
+.yarn
+.pnpm
+.pnpm-store
+
+# 构建产物
+dist
+build
+
+# Git 文件
+.git
+.gitignore
+
+# 编辑器和 IDE
+.vscode
+.idea
+
+# 临时文件
+*.log
+.DS_Store
+.env
+.env.*

@@ -18,14 +18,13 @@ async function main() {
   const app = express();
   app.use(cors());
   app.use(express.json());
-  app.use(cors({ origin: "*" })); 
 
   // 正确顺序
   app.use("/api/auth", authRoutes);
   app.use("/api/orders", orderRoutes);
   app.use("/api/merchants", merchantRoutes);
   app.use("/api/products", productRoutes);  // 挂载商品路由
-  app.use("/api/dashboard", dashboardRoutes);
+  app.use("/api/dashboard",dashboardRoutes);
 
   const server = http.createServer(app);
   setupWS(server);

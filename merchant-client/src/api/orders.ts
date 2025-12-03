@@ -45,6 +45,11 @@ export interface Order {
 
   /** 后端推送过来的路线点数组 */
   routePoints?: RoutePoint[];
+  trackState?: {
+    index: number;
+    total: number;
+    lastPosition?: RoutePoint; // 复用你的 RoutePoint 类型
+  };
 
   /** 送达时间（如果已送达） */
   deliveredAt?: string;

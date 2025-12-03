@@ -21,8 +21,14 @@ declare global {
 // 认证中间件，处理角色权限
 export const auth = (roles: string[] = []) => {
   return (req: Request, res: Response, next: NextFunction) => {
+    // ✅ 新增：如果是预检请求 (OPTIONS)，直接放行，交给 CORS 中间件处理
+    if (req.method === 'OPTIONS') {
+      return next();
+    }
     // 获取 Authorization 头部并提取 Token
     const token = req.headers.authorization?.split(" ")[1];
+     
+    console.log("Auth failed: No token provided");
     if (!token) return res.status(401).json({ error: "未登录" });
 
     try {

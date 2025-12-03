@@ -96,6 +96,15 @@ export class TrackPlayer {
     const currentPoint = this.points[this.index];
     const nextPoint = this.points[this.index + 1];
 
+    // ============================================
+    // ⭐ 新增：计算剩下所有路程还需要多少秒 ⭐
+    // ============================================
+    // 截取从当前位置到终点的路径点
+    const remainingRoute = this.points.slice(this.index);
+    // 重新计算剩余时间
+    const remainingSeconds = calcETASeconds(remainingRoute, this.speed);
+    // ============================================
+
     // 3. 计算距离和时间
     let distance = calcTotalDistance([currentPoint, nextPoint]);
     if (!distance || distance < 0.1) distance = 1;
@@ -111,7 +120,8 @@ export class TrackPlayer {
       index: this.index,
       position: currentPoint, // 当前起点
       nextPosition: nextPoint, // 目标点
-      duration: duration // 前端动画时间需严格等于这个值
+      duration: duration, // 前端动画时间需严格等于这个值
+      remainingSeconds: remainingSeconds // <--- 把实时剩余时间发给前端
     });
 
     // 5. 推进索引并等待

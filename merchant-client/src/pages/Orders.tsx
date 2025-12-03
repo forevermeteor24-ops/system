@@ -203,7 +203,7 @@ export default function MerchantHome() {
            {/* 新增 资料 按钮 */}
            <button 
              style={styles.btnSecondary} 
-             onClick={() => navigate('/profile')}
+             onClick={() => navigate('/merchant/profile')}
            >
              👤 资料
            </button>
@@ -332,7 +332,7 @@ export default function MerchantHome() {
 
                         {/* 底部：操作按钮 */}
                         <div style={styles.orderFooterCompact}>
-                          <Link to={`/order/${o._id}`} style={styles.linkBtnSmall}>查看详情</Link>
+                          <Link to={`/orders/${o._id}`} style={styles.linkBtnSmall}>查看详情</Link>
                           
                           <div style={{display:'flex', gap:'8px'}}>
                             {o.status === "待发货" && (

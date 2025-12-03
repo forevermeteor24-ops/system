@@ -12,6 +12,8 @@ export default function OrderDetail() {
 
   const [order, setOrder] = useState<any>(null);
   const [remainingTime, setRemainingTime] = useState<string>("--");
+  // ⭐ 新增：实时倒计时状态
+  const [realtimeLabel, setRealtimeLabel] = useState<string>("");
   
   // 地图相关 Ref
   const mapRef = useRef<HTMLDivElement | null>(null);
@@ -126,11 +128,39 @@ export default function OrderDetail() {
     ws.onopen = () => {
       console.log("🔗 WS 已连接");
       ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
+    
+    // ⭐ 新增：断线重连/刷新页面后的“激活”逻辑 ⭐
+    // ==========================================
+    if (order.status === "配送中"
+    ) {
+          console.log("正在尝试恢复轨迹...");
+      // 发送 start-track 命令。
+      // 后端逻辑是：如果 player 不存在会新建；如果存在会复用；
+      // 并且会调用 restoreState 从数据库读取进度，不会从头开始，而是从断点继续。
+      ws.send(JSON.stringify({ 
+        type: "start-track", 
+        orderId: order._id,
+        points: order.routePoints // 必须把路径再次传给后端，防止后端重启丢失路径数据
+      }));
+      }
     };
-
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
+        // ⭐ 处理剩余时间更新
+        if (msg.remainingSeconds !== undefined) {
+          // 将秒转换为友好格式 (如: 1小时 5分钟)
+          const hrs = Math.floor(msg.remainingSeconds / 3600);
+          const mins = Math.floor((msg.remainingSeconds % 3600) / 60);
+          const secs = Math.floor(msg.remainingSeconds % 60);
+          
+          let label = "";
+          if (hrs > 0) label += `${hrs}小时 `;
+          if (mins > 0 || hrs > 0) label += `${mins}分钟 `;
+          label += `${secs}秒`;
+          
+          setRealtimeLabel(label);
+       }
         
         // 处理位置更新
         if (msg.type === "location" && markerRef.current) {
@@ -218,8 +248,11 @@ export default function OrderDetail() {
                <div style={{fontSize: '24px', fontWeight: 'bold', color: '#1890ff', margin: '5px 0'}}>
                  {order?.status || "加载中..."}
                </div>
+               {/* ⭐ 修改这里：优先显示实时计算的时间 */}
                {order?.status === "配送中" && (
-                 <div style={styles.etaBadge}>预计送达: {remainingTime}</div>
+                 <div style={styles.etaBadge}>
+                   预计送达: {realtimeLabel || remainingTime}
+                 </div>
                )}
              </div>
 

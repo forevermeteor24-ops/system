@@ -30,6 +30,7 @@ export default function MerchantHome() {
   
   // === 核心数据状态 ===
   const [merchantId, setMerchantId] = useState<string>("");
+  const [merchantName, setMerchantName] = useState<string>("商家中心"); // 新增：商家名称状态
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,11 +50,15 @@ export default function MerchantHome() {
   // === 初始化加载 ===
   useEffect(() => {
     const id = localStorage.getItem("merchantId");
+    // 尝试获取商家名称，如果没有则默认
+    const name = localStorage.getItem("username") || localStorage.getItem("merchantName") || "我的店铺";
+    
     if (!id) {
       navigate("/login");
       return;
     }
     setMerchantId(id);
+    setMerchantName(name);
   }, [navigate]);
 
   useEffect(() => {
@@ -93,16 +98,13 @@ export default function MerchantHome() {
   }
 
   // === 计算属性：处理订单的过滤与排序 ===
-  // 使用 useMemo 只有在相关数据变化时才重新计算，性能更好
   const displayedOrders = useMemo(() => {
     let result = [...orders];
 
-    // 1. 过滤状态
     if (filterStatus !== "全部") {
       result = result.filter(o => o.status === filterStatus);
     }
 
-    // 2. 排序逻辑
     result.sort((a, b) => {
       const timeA = new Date(a.createdAt || 0).getTime();
       const timeB = new Date(b.createdAt || 0).getTime();
@@ -129,11 +131,11 @@ export default function MerchantHome() {
     productCount: products.length
   };
 
-  // ... (保留之前的商品 CRUD 和订单操作函数，doShip, handleCreateProduct 等逻辑完全不变)
+  // === 操作函数 ===
   const openCreateModal = () => { setProductToEdit(null); setNewProduct({ name: "", price: 0 }); setShowProductModal(true); };
   const openEditModal = (p: ProductItem) => { setProductToEdit({ ...p }); setShowProductModal(true); };
-  const handleCreateProduct = async () => { /* ...原代码... */ 
-    // 这里简化省略重复代码，逻辑同您之前的一样，只需要注意成功后调用 setProducts
+  
+  const handleCreateProduct = async () => {
     if (!newProduct.name || !newProduct.price) return alert("请输入完整信息");
     try {
       const payload = { ...newProduct, merchantId } as any;
@@ -143,7 +145,8 @@ export default function MerchantHome() {
       loadProducts();
     } catch(e) { alert("创建失败") }
   };
-  const handleUpdateProduct = async () => { /* ...原代码... */ 
+
+  const handleUpdateProduct = async () => {
      if (!productToEdit) return;
      try {
        const payload = { name: productToEdit.name, price: Number(productToEdit.price), merchantId };
@@ -152,47 +155,71 @@ export default function MerchantHome() {
        loadProducts();
      } catch(e) { alert("更新失败") }
   };
-  const handleDeleteProduct = async (id: string) => { /* ...原代码... */
+
+  const handleDeleteProduct = async (id: string) => {
      if(!confirm("确认删除?")) return;
      await deleteProduct(id);
      setProducts(ps => ps.filter(p => p._id !== id));
   };
+
   const doShip = async (id: string) => { 
      if(!confirm("确认发货?")) return;
      await shipOrder(id); loadOrders(); 
   };
+
   const doCancelByMerchant = async (id: string) => { 
      if(!confirm("确认取消?")) return;
      await updateStatus(id, "商家已取消"); loadOrders(); 
   };
+
   const doDelete = async (id: string) => { 
-    if(!confirm("删除?")) return;
+    if(!confirm("删除该订单记录?")) return;
     await deleteOrder(id); setOrders(os => os.filter(o => o._id !== id));
   };
 
-  // 表单输入处理
   const onNewProductChange = (e: any) => setNewProduct({...newProduct, [e.target.name]: e.target.value});
   const onEditProductChange = (e: any) => productToEdit && setProductToEdit({...productToEdit, [e.target.name]: e.target.value});
 
 
   return (
     <div className="merchant-dashboard" style={styles.page}>
-      {/* 顶栏 */}
+      {/* 顶栏：修改了标题显示和按钮组 */}
       <header style={styles.navbar}>
-        <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
-          <h2 style={{margin:0}}>商家工作台</h2>
-          <span style={styles.badge}>ID: {merchantId}</span>
+        <div style={{display:'flex', flexDirection:'column'}}>
+          {/* 这里显示商家名称 */}
+          <h2 style={{margin:0, fontSize: '20px', color: '#333'}}>{merchantName}</h2>
+          <span style={{fontSize: '12px', color: '#888'}}>ID: {merchantId}</span>
         </div>
-        <button
-          style={{ ...styles.btn, background: "#ff4d4f" }}
-          onClick={() => {
-            localStorage.removeItem("token");
-            localStorage.removeItem("merchantId");
-            navigate("/login");
-          }}
-        >
-          退出登录
-        </button>
+        
+        <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+           {/* 新增 Dashboard 按钮 */}
+           <button 
+             style={styles.btnSecondary} 
+             onClick={() => navigate('/dashboard')}
+           >
+             📊 Dashboard
+           </button>
+
+           {/* 新增 资料 按钮 */}
+           <button 
+             style={styles.btnSecondary} 
+             onClick={() => navigate('/profile')}
+           >
+             👤 资料
+           </button>
+
+           {/* 退出按钮 */}
+           <button
+            style={styles.btnDanger}
+            onClick={() => {
+              localStorage.removeItem("token");
+              localStorage.removeItem("merchantId");
+              navigate("/login");
+            }}
+          >
+            退出登录
+          </button>
+        </div>
       </header>
 
       {/* 主选项卡导航 */}
@@ -243,12 +270,10 @@ export default function MerchantHome() {
               </div>
             )}
 
-            {/* ---------------- 视图 2: 订单管理 (核心修改) ---------------- */}
+            {/* ---------------- 视图 2: 订单管理 (样式已调小，逻辑已修改) ---------------- */}
             {activeTab === 'orders' && (
               <div>
-                {/* 筛选与排序工具栏 */}
                 <div style={styles.toolbar}>
-                  {/* 左侧：状态筛选 */}
                   <div style={styles.filterGroup}>
                     {ORDER_STATUSES.map(status => (
                       <button
@@ -261,9 +286,7 @@ export default function MerchantHome() {
                     ))}
                   </div>
 
-                  {/* 右侧：排序下拉框 */}
                   <div style={styles.sortGroup}>
-                    <label style={{fontSize:'14px', color:'#666'}}>排序：</label>
                     <select 
                       value={sortOption} 
                       onChange={(e) => setSortOption(e.target.value as SortOption)}
@@ -277,44 +300,53 @@ export default function MerchantHome() {
                   </div>
                 </div>
 
-                {/* 订单列表 */}
                 <div style={styles.listContainer}>
                   {displayedOrders.length === 0 ? (
                     <div style={styles.emptyMsg}>在此条件下暂无订单</div>
                   ) : (
                     displayedOrders.map((o) => (
-                      <div key={o._id} style={styles.orderItem}>
-                        <div style={styles.orderHeader}>
-                           <div>
-                             <span style={{fontWeight:'bold', fontSize:'16px'}}>{o.title}</span>
-                             <span style={{color:'#999', fontSize:'12px', marginLeft:'10px'}}>
-                               {new Date(o.createdAt || Date.now()).toLocaleString()}
+                      <div key={o._id} style={styles.orderItemCompact}> {/* 使用新的紧凑样式 */}
+                        
+                        {/* 头部：标题、时间、状态 */}
+                        <div style={styles.orderHeaderCompact}>
+                           <div style={{display:'flex', alignItems:'center', gap: '8px'}}>
+                             <span style={{fontWeight:'bold', fontSize:'14px', color: '#333'}}>{o.title}</span>
+                             <span style={{color:'#aaa', fontSize:'12px'}}>
+                               {new Date(o.createdAt || Date.now()).toLocaleDateString()}
                              </span>
                            </div>
                            <span style={styles.statusBadge(o.status)}>{o.status}</span>
                         </div>
-                        <div style={styles.orderBody}>
-                          <div style={{color:'#666'}}>
-                             <div>单价: ¥{o.price} × 数量: {o.quantity}</div>
-                             <div style={{marginTop:'5px'}}>地址: {o.address?.detail}</div>
+
+                        {/* 主体：详情与金额 */}
+                        <div style={styles.orderBodyCompact}>
+                          <div style={{fontSize: '13px', color:'#555'}}>
+                             <span>¥{o.price} × {o.quantity}</span>
+                             <span style={{margin: '0 8px', color: '#eee'}}>|</span>
+                             <span title={o.address?.detail}>{o.address?.detail ? (o.address.detail.length > 20 ? o.address.detail.substring(0,20)+'...' : o.address.detail) : '无地址信息'}</span>
                           </div>
-                          <div style={{fontSize:'18px', fontWeight:'bold', color:'#333'}}>
+                          <div style={{fontSize:'16px', fontWeight:'bold', color:'#1890ff'}}>
                              ¥{o.totalPrice?.toFixed(2)}
                           </div>
                         </div>
-                        <div style={styles.orderFooter}>
-                          <div style={{display:'flex', gap:'10px'}}>
+
+                        {/* 底部：操作按钮 */}
+                        <div style={styles.orderFooterCompact}>
+                          <Link to={`/order/${o._id}`} style={styles.linkBtnSmall}>查看详情</Link>
+                          
+                          <div style={{display:'flex', gap:'8px'}}>
                             {o.status === "待发货" && (
-                              <button style={styles.btnPrimary} onClick={() => doShip(o._id)}>立即发货</button>
+                              <button style={styles.btnPrimarySmall} onClick={() => doShip(o._id)}>发货</button>
                             )}
                             {o.status === "用户申请退货" && (
-                              <button style={styles.btnDanger} onClick={() => doCancelByMerchant(o._id)}>同意退款并取消</button>
+                              <button style={styles.btnDangerSmall} onClick={() => doCancelByMerchant(o._id)}>同意退款</button>
                             )}
-                            {(o.status === "已送达" || o.status === "商家已取消" || o.status === "已完成") && (
-                              <button style={styles.btnGhost} onClick={() => doDelete(o._id)}>删除记录</button>
+                            
+                            {/* 修改：只有 "商家已取消" 或 "已完成" 才显示删除按钮 */}
+                            {(o.status === "商家已取消" || o.status === "已完成") && (
+                              <button style={styles.btnGhostSmall} onClick={() => doDelete(o._id)}>删除记录</button>
                             )}
                           </div>
-                          <Link to={`/order/${o._id}`} style={styles.linkBtn}>查看详情 →</Link>
                         </div>
                       </div>
                     ))
@@ -356,7 +388,6 @@ export default function MerchantHome() {
         )}
       </div>
 
-      {/* 弹窗部分保持不变，仅更新 style 引用 */}
       {showProductModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
@@ -384,38 +415,63 @@ export default function MerchantHome() {
   );
 }
 
-// === 增强版样式表 ===
+// === 更新后的样式表 ===
 const styles: Record<string, any> = {
   page: { padding: "20px", fontFamily: "'Segoe UI', Roboto, sans-serif", background: "#f3f4f6", minHeight: "100vh" },
-  navbar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "15px 20px", background: "#ffffff", borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: "20px" },
+  // 更新后的 Navbar
+  navbar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", background: "#ffffff", borderRadius: "10px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: "20px" },
   badge: { background: "#e6f7ff", color: "#1890ff", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" },
   
   // Tabs
-  tabContainer: { display: 'flex', gap: '10px', marginBottom: '20px' },
-  tab: { padding: '10px 20px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '16px', color: '#666', fontWeight: 500, borderRadius: '8px' },
-  tabActive: { padding: '10px 20px', border: 'none', background: '#fff', cursor: 'pointer', fontSize: '16px', color: '#1890ff', fontWeight: 'bold', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' },
+  tabContainer: { display: 'flex', gap: '5px', marginBottom: '15px' },
+  tab: { padding: '8px 16px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '15px', color: '#666', fontWeight: 500, borderRadius: '6px' },
+  tabActive: { padding: '8px 16px', border: 'none', background: '#fff', cursor: 'pointer', fontSize: '15px', color: '#1890ff', fontWeight: 'bold', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
   
   // Content Area
-  contentArea: { background: '#fff', borderRadius: '12px', padding: '25px', boxShadow: '0 2px 10px rgba(0,0,0,0.03)', minHeight: '500px' },
+  contentArea: { background: '#fff', borderRadius: '12px', padding: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.02)', minHeight: '500px' },
   
-  // Toolbar (Filter & Sort)
-  toolbar: { display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #eee' },
-  filterGroup: { display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '5px' },
-  filterBtn: { padding: '6px 12px', border: '1px solid #eee', background: '#fff', borderRadius: '20px', cursor: 'pointer', fontSize: '13px', color: '#666', whiteSpace:'nowrap' },
-  filterBtnActive: { padding: '6px 12px', border: '1px solid #1890ff', background: '#e6f7ff', borderRadius: '20px', cursor: 'pointer', fontSize: '13px', color: '#1890ff', fontWeight: 'bold', whiteSpace:'nowrap' },
-  sortGroup: { display: 'flex', alignItems: 'center', gap: '10px', alignSelf: 'flex-end' },
-  selectInput: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '14px' },
+  // Toolbar
+  toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #f0f0f0' },
+  filterGroup: { display: 'flex', gap: '6px', overflowX: 'auto' },
+  filterBtn: { padding: '4px 10px', border: '1px solid #eee', background: '#f9f9f9', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', color: '#666', transition: 'all 0.2s' },
+  filterBtnActive: { padding: '4px 10px', border: '1px solid #1890ff', background: '#e6f7ff', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', color: '#1890ff', fontWeight: 'bold' },
+  sortGroup: { display: 'flex', alignItems: 'center' },
+  selectInput: { padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', outline: 'none' },
 
-  // Orders List
-  listContainer: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  orderItem: { border: '1px solid #eee', borderRadius: '10px', padding: '20px', transition: 'all 0.2s', background: '#fff' },
-  orderHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: '15px', borderBottom: '1px solid #f9f9f9', paddingBottom: '10px' },
-  orderBody: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
-  orderFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '10px' },
+  // === 紧凑型订单样式 (New) ===
+  listContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '12px' }, // 改为 Grid 布局，更省空间
+  orderItemCompact: { 
+    border: '1px solid #eaeaea', 
+    borderRadius: '8px', 
+    padding: '12px 15px', 
+    background: '#fff', 
+    transition: 'box-shadow 0.2s',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between'
+  },
+  orderHeaderCompact: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px dashed #f5f5f5' },
+  orderBodyCompact: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
+  orderFooterCompact: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '5px' },
+
   statusBadge: (status: string) => {
     const map: any = { "待发货": "#fa8c16", "已送达": "#52c41a", "已完成": "#13c2c2", "配送中": "#1890ff", "商家已取消": "#999", "用户申请退货": "#f5222d" };
-    return { background: map[status] || '#eee', color: '#fff', padding: '3px 8px', borderRadius: '4px', fontSize: '12px' }
+    return { background: map[status] || '#eee', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', transform: 'scale(0.95)' }
   },
+
+  // Buttons & Forms
+  btnSecondary: { background: "#f0f2f5", color: "#333", border: "1px solid #d9d9d9", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: '13px', transition: 'all 0.2s' },
+  btnPrimary: { background: "#1890ff", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
+  btnDanger: { background: "#ff4d4f", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: '13px' },
+  btnSuccess: { background: "#52c41a", color: "white", border: "none", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", fontSize: '14px' },
+  btnGhost: { background: "transparent", color: "#666", border: "1px solid #ddd", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
+  btnDangerGhost: { background: "transparent", color: "#ff4d4f", border: "1px solid #ffa39e", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
+  
+  // Small Buttons for Compact View
+  btnPrimarySmall: { background: "#1890ff", color: "white", border: "none", padding: "4px 10px", borderRadius: "4px", cursor: "pointer", fontSize: '12px' },
+  btnDangerSmall: { background: "#ff4d4f", color: "white", border: "none", padding: "4px 10px", borderRadius: "4px", cursor: "pointer", fontSize: '12px' },
+  btnGhostSmall: { background: "white", color: "#999", border: "1px solid #eee", padding: "4px 8px", borderRadius: "4px", cursor: "pointer", fontSize: '12px' },
+  linkBtnSmall: { color: "#1890ff", textDecoration: 'none', fontSize: '12px' },
 
   // Grid / Cards
   gridContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' },
@@ -425,15 +481,6 @@ const styles: Record<string, any> = {
   productList: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "20px" },
   productCard: { border: '1px solid #eee', borderRadius: '10px', padding: '15px', display:'flex', flexDirection:'column', alignItems:'center' },
   productIcon: { fontSize: '40px', marginBottom: '10px', background: '#f0f5ff', width: '80px', height: '80px', display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '50%' },
-
-  // Buttons & Forms
-  btn: { padding: "8px 16px", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" },
-  btnPrimary: { background: "#1890ff", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
-  btnSuccess: { background: "#52c41a", color: "white", border: "none", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", fontSize: '14px' },
-  btnDanger: { background: "#ff4d4f", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
-  btnGhost: { background: "transparent", color: "#666", border: "1px solid #ddd", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
-  btnDangerGhost: { background: "transparent", color: "#ff4d4f", border: "1px solid #ffa39e", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
-  linkBtn: { color: "#1890ff", textDecoration: 'none', fontSize: '14px' },
 
   // Modal
   modalOverlay: { position: "fixed" as "fixed", top: "0", left: "0", width: "100%", height: "100%", background: "rgba(0, 0, 0, 0.4)", display: "flex", justifyContent: "center", alignItems: "center", backdropFilter: 'blur(3px)', zIndex: 100 },

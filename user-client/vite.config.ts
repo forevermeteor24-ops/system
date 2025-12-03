@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "combines-sperm-brakes-partnership.trycloudflare.com"
+      "cigarettes-bigger-brokers-keyword.trycloudflare.com"
     ],
   },
 });

@@ -65,6 +65,9 @@ export async function createOrder(req: Request, res: Response) {
     /** 总价 = 单价 * 数量 */
     const totalPrice = price * quantity;
 
+    /** 获取用户经纬度 */
+    const { lat, lng } = actor.address; // 从用户的地址中获取经纬度
+
     /** 创建订单 */
     const order = await OrderModel.create({
       title,
@@ -75,6 +78,10 @@ export async function createOrder(req: Request, res: Response) {
         detail: address.detail,
         lng: address.lng || null,
         lat: address.lat || null,
+      },
+      userLocation: { // 保存用户的经纬度
+        lat: lat || null,
+        lng: lng || null,
       },
       status: "待发货",
       merchantId,
@@ -91,6 +98,7 @@ export async function createOrder(req: Request, res: Response) {
     });
   }
 }
+
 
 
 

@@ -7,6 +7,7 @@ import {
   updateOrderStatus,
   shipOrder,
   deleteOrder,
+  batchShipOrders,
 } from "../controllers/orderController";
 
 import { auth } from "../middleware/authMiddleware";
@@ -28,6 +29,7 @@ router.get("/:id", auth(["merchant", "user"]), getOrder);
 /* -----------------------------
    3. 商家发货（自动路线 + WS）
 ------------------------------ */
+router.post("/batch-ship", auth(["merchant"]),batchShipOrders);
 router.put("/:id/ship", auth(["merchant"]), shipOrder);
 
 /* -----------------------------

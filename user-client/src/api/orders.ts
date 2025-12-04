@@ -13,6 +13,7 @@ export interface UserInfo {
   _id: string;
   username: string;
   address: Address;
+  phone?:Address;
 }
 
 export type OrderStatus =
@@ -37,7 +38,7 @@ export interface Order {
   totalPrice: number;     
   eta: number;            // ETA 时间戳 (ms)
   address: Address;
-  merchantId: string;
+  merchantId: string | UserInfo;
   userId: string;
   status: OrderStatus;
   createdAt: string;

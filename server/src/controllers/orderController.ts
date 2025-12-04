@@ -4,6 +4,7 @@ import OrderModel from "../models/orderModel";
 import User from "../models/userModel";
 import ProductModel from "../models/productModel";
 import { startTrack } from "../ws";
+import Order from '../models/orderModel';
 /**
  * 创建订单
  * 订单 address 现在是对象结构：
@@ -128,117 +129,158 @@ export async function getOrders(req: Request, res: Response) {
 }
 
 
-/** 获取单个订单 */
 export async function getOrder(req: Request, res: Response) {
   try {
-    const actor = req.user;
+    // 1. 获取当前登录用户
+    const actor = (req as any).user;
     if (!actor) return res.status(401).json({ error: "未登录" });
 
     const id = req.params.id;
     if (!id) return res.status(400).json({ error: "缺少订单 id" });
 
-    let order;
-    if (actor.role === "merchant")
-      order = await OrderModel.findOne({ _id: id, merchantId: actor.userId });
-    else if (actor.role === "user")
-      order = await OrderModel.findOne({ _id: id, userId: actor.userId });
-    else order = await OrderModel.findById(id);
+    // 2. 构建查询构建器 (Query Builder)
+    // 我们先不加 await，因为后面要追加 populate
+    let query;
 
-    if (!order) return res.status(404).json({ error: "Order not found 或无权限" });
+    // 🔴 保持你原有的权限逻辑不变：
+    // 如果是商家，必须同时匹配 订单ID 和 商家ID
+    if (actor.role === "merchant") {
+      query = OrderModel.findOne({ _id: id, merchantId: actor.userId });
+    } 
+    // 如果是用户，必须同时匹配 订单ID 和 用户ID
+    else if (actor.role === "user") {
+      query = OrderModel.findOne({ _id: id, userId: actor.userId });
+    } 
+    // 管理员或其他
+    else {
+      query = OrderModel.findById(id);
+    }
+
+    // 3. ⭐ 核心修改：追加 populate
+    // 这会将 userId 字段从 "字符串ID" 填充为 "包含 username 和 phone 的对象"
+    query.populate("userId", "username phone");
+    query.populate("merchantId", "username phone"); 
+
+    // 4. 执行查询
+    const order = await query.exec();
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found 或无权限" });
+    }
+
     return res.json(order);
+
   } catch (err: any) {
     console.error("getOrder error:", err);
     return res.status(500).json({ error: "获取订单失败" });
   }
 }
-
-/* 商家发货 */
-export async function shipOrder(req: Request, res: Response) {
-  try {
-    const actor = (req as any).user;
-    const orderId = req.params.id;
-
-    console.log(`[ShipDebug] 开始发货: OrderID=${orderId}, ActorID=${actor?.userId}`);
-
-    // 1. 查订单
-    const order = await OrderModel.findById(orderId);
-    if (!order) return res.status(404).json({ error: "订单不存在" });
-
-    // 2. 权限校验
-    if (order.merchantId.toString() !== actor.userId) {
-      return res.status(403).json({ error: "不能发货其他商家的订单" });
-    }
-
-    // 3. 查商家与用户地址
-    const merchant = await User.findById(order.merchantId);
-    if (!merchant) return res.status(404).json({ error: "商家账户不存在" });
-
-    const shopAddress = merchant.address;
-    const userAddress = order.address;
-
-    if (!shopAddress?.detail) {
-      return res.status(400).json({ error: "商家未设置店铺地址" });
-    }
-    if (!userAddress?.detail) {
-      return res.status(400).json({ error: "用户收货地址无效" });
-    }
-
-    console.log(`[ShipDebug] 原始地址: 商家=[${shopAddress.detail}] 用户=[${userAddress.detail}]`);
-
-    // 4. 经纬度获取（优先DB）
-    let origin = { lng: shopAddress.lng, lat: shopAddress.lat };
-    let dest = { lng: userAddress.lng, lat: userAddress.lat };
-
-    // 商家经纬度
-    if (!origin.lng || !origin.lat) {
-      console.log("[ShipDebug] 商家经纬度缺失 -> 调用 geocode");
-      const geo = await geocodeAddress(shopAddress.detail);
-      merchant.address.lng = geo.lng;
-      merchant.address.lat = geo.lat;
-      await merchant.save();
-      origin = geo;
-    }
-
-    // 用户经纬度
-    if (!dest.lng || !dest.lat) {
-      console.log("[ShipDebug] 用户经纬度缺失 -> 调用 geocode");
-      const geo = await geocodeAddress(userAddress.detail);
-      order.address.lng = geo.lng;
-      order.address.lat = geo.lat;
-      await order.save();
-      dest = geo;
-    }
-
-    console.log("[ShipDebug] 使用经纬度:", { origin, dest });
-
-    // 5. 路线规划
-    const route = await planRoute(origin, dest);
-    const points = parseRouteToPoints(route);
-
-    // ---------------------------------------------------------------------
-    // ❗❗❗ 关键修复：先保存路线 + 状态，再启动轨迹模拟（否则前端拿不到路线）
-    // ---------------------------------------------------------------------
-    order.status = "配送中";
-    order.routePoints = points as any;          // ⭐ 前端需要这个来画路径和小车初始位置
-    await order.save();
-
-    // 6. 启动模拟器（推送 WS 位置）
-    startTrack(orderId, points);
-
-    console.log("[ShipDebug] 发货成功 & 轨迹模拟启动！");
-    return res.json(order);
-
-  } catch (err: any) {
-    console.error("shipOrder Fatal Error:", err);
-    return res.status(500).json({
-      error: "发货失败",
-      detail: err.message
-    });
+// 核心发货逻辑 (公共函数)
+// ==========================================
+async function coreShipLogic(orderId: string, merchant: any) {
+  // 1. 查订单
+  const order = await OrderModel.findById(orderId);
+  if (!order) throw new Error(`订单不存在`);
+  
+  // 2. 状态校验
+  if (order.status !== '待发货') {
+    throw new Error(`订单 ${order.title} 状态不正确 (${order.status})`);
   }
+  if (order.merchantId.toString() !== merchant._id.toString()) {
+    throw new Error(`订单 ${order.title} 归属权错误`);
+  }
+
+  // 3. 地址与坐标处理
+  const shopAddress = merchant.address;
+  const userAddress = order.address;
+
+  if (!shopAddress?.detail || !userAddress?.detail) {
+    throw new Error(`订单 ${order.title} 地址信息缺失`);
+  }
+
+  let origin = { lng: shopAddress.lng, lat: shopAddress.lat };
+  let dest = { lng: userAddress.lng, lat: userAddress.lat };
+
+  // 补全商家坐标
+  if (!origin.lng || !origin.lat) {
+    const geo = await geocodeAddress(shopAddress.detail);
+    origin = geo;
+    // 顺便更新商家信息，避免下次重复查
+    await User.findByIdAndUpdate(merchant._id, { 'address.lng': geo.lng, 'address.lat': geo.lat });
+  }
+
+  // 补全用户坐标
+  if (!dest.lng || !dest.lat) {
+    const geo = await geocodeAddress(userAddress.detail);
+    dest = geo;
+    order.address.lng = geo.lng;
+    order.address.lat = geo.lat;
+  }
+
+  // 4. 路线规划 (耗时操作)
+  const route = await planRoute(origin, dest);
+  const points = parseRouteToPoints(route);
+
+  // 5. 更新数据库
+  order.status = "配送中";
+  order.routePoints = points as any; 
+  await order.save();
+
+  // 6. 启动模拟器
+  startTrack(orderId, points);
+
+  return order;
 }
 
+// 接口：单个发货 (保留原有入口，但在内部调用 coreShipLogic)
+// ==========================================
+export const shipOrder = async (req: Request, res: Response) => {
+  try {
+    const actor = (req as any).user;
+    const merchant = await User.findById(actor.userId);
+    const result = await coreShipLogic(req.params.id, merchant);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
+// ==========================================
+export const batchShipOrders = async (req: Request, res: Response) => {
+  try {
+    const actor = (req as any).user;
+    const { orderIds } = req.body; // Array of strings
 
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: '请选择订单' });
+    }
+
+    // 获取商家信息 (只查一次)
+    const merchant = await User.findById(actor.userId);
+    if (!merchant) return res.status(404).json({ message: "商家不存在" });
+
+    // 并发处理 (使用 allSettled 防止单单失败影响整体)
+    const results = await Promise.allSettled(
+      orderIds.map(id => coreShipLogic(id, merchant))
+    );
+
+    // 统计结果
+    const successCount = results.filter(r => r.status === 'fulfilled').length;
+    const errors = results
+      .filter(r => r.status === 'rejected')
+      .map((r: any) => r.reason.message);
+
+    res.json({
+      success: true,
+      message: `处理结束: 成功 ${successCount} / 总 ${orderIds.length}`,
+      details: { successCount, errors }
+    });
+
+  } catch (error) {
+    console.error('Batch ship error:', error);
+    res.status(500).json({ message: '批量发货系统异常' });
+  }
+};
 
 /** 更新订单状态 */
 export async function updateOrderStatus(req: Request, res: Response) {

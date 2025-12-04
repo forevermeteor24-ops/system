@@ -28,9 +28,11 @@ export const auth = (roles: string[] = []) => {
     // 获取 Authorization 头部并提取 Token
     const token = req.headers.authorization?.split(" ")[1];
      
-    console.log("Auth failed: No token provided");
-    if (!token) return res.status(401).json({ error: "未登录" });
-
+    if (!token) {
+      // 只有非 OPTIONS 请求没带 Token 才报错
+      console.log("Auth failed: No token provided"); 
+      return res.status(401).json({ error: "未登录" });
+    }
     try {
       // 使用 JWT 验证并解码 Token
       const decoded = jwt.verify(

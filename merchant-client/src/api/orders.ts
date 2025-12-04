@@ -13,6 +13,7 @@ export interface UserInfo {
   _id: string;
   username: string;
   address: Address;
+  phone?:Address;
 }
 
 export type OrderStatus =
@@ -38,7 +39,7 @@ export interface Order {
   eta: number;            // ETA 时间戳 (ms)
   address: Address;
   merchantId: string;
-  userId: string;
+  userId: string | UserInfo;
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
@@ -76,6 +77,44 @@ function authHeader() {
 export async function fetchOrders(): Promise<Order[]> {
   const res = await fetch(BASE, { headers: authHeader() });
   if (!res.ok) throw new Error("获取订单列表失败");
+  return res.json();
+}
+
+/* ===========================
+   3. 获取待发货列表 (原生 fetch 版)
+=========================== */
+export async function fetchPendingOrders(): Promise<Order[]> {
+  // 手动拼接 query 参数
+  // 注意：fetch 不像 axios 自动处理 params，需要拼接到 URL 后
+  const url = `${BASE}?status=${encodeURIComponent('待发货')}`;
+  
+  const res = await fetch(url, { 
+    headers: authHeader() 
+  });
+
+  if (!res.ok) throw new Error("获取待发货列表失败");
+  return res.json();
+}
+
+/* ===========================
+   4. 批量发货 (原生 fetch 版)
+=========================== */
+export async function batchShipOrders(orderIds: string[]) {
+  const res = await fetch(`${BASE}/batch-ship`, {
+    method: 'POST',
+    headers: {
+      ...authHeader(), // 展开原有的认证头
+      'Content-Type': 'application/json' // ⚠️ POST JSON 数据必须加这个
+    },
+    body: JSON.stringify({ orderIds }) // body 必须转成字符串
+  });
+
+  if (!res.ok) {
+    // 尝试读取后端返回的错误信息
+    const errData = await res.json().catch(() => ({})); 
+    throw new Error(errData.message || "批量发货失败");
+  }
+  
   return res.json();
 }
 

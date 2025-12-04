@@ -75,18 +75,49 @@ export default function Dashboard() {
       chartInstanceRef.current = chart;
     }
 
-    // B. 准备数据
-    // 经纬度转换：后端数据是 [纬度, 经度, 值]，地图通常 X轴是经度
-    const formattedData = heatmapData.map((p) => [p[1], p[0], p[2]]);
-    const values = heatmapData.map((p) => p[2]);
+    // ----------------------------------------------------
+    // ⭐ 新增：数据聚合逻辑
+    // 将相同坐标的点合并，数量相加
+    // ----------------------------------------------------
+    const aggMap = new Map<string, number[]>();
+    
+    heatmapData.forEach((item) => {
+      // item 是 [lat, lng, 1]
+      const lat = item[0];
+      const lng = item[1];
+      const count = item[2]; // 后端传过来总是 1
+      
+      // 生成唯一 key，例如 "31.23,121.47"
+      const key = `${lat},${lng}`;
+
+      if (aggMap.has(key)) {
+        const existing = aggMap.get(key)!;
+        // 如果坐标已存在，让数量 +1
+        existing[2] += count; 
+      } else {
+        // 如果是新坐标，存入 Map (注意要复制一份数组，不要修改原数据)
+        aggMap.set(key, [lat, lng, count]);
+      }
+    });
+
+    // 将 Map 转回数组，得到合并后的数据
+    const aggregatedData = Array.from(aggMap.values());
+
+    // ----------------------------------------------------
+    // 数据转换：[纬度, 经度, 总数] -> [经度, 纬度, 总数]
+    // ----------------------------------------------------
+    const formattedData = aggregatedData.map((p) => [p[1], p[0], p[2]]);
+    
+    // 计算最大值 (用于 VisualMap 颜色映射)
+    const values = formattedData.map((p) => p[2]);
     const maxVal = values.length ? Math.max(...values) : 10;
 
-    // C. 设置配置项
     const option: echarts.EChartsOption = {
-      backgroundColor: "#fff", // 强制白色背景
+      backgroundColor: "#fff",
       title: {
         text: "订单地理分布",
-        subtext: `数据点数量: ${heatmapData.length}`,
+        // 显示原始数据点的总数（比如 8 单），而不是合并后的点数（2 个位置）
+        subtext: `总订单量: ${heatmapData.length} 单 / 分布位置: ${aggregatedData.length} 个`,
         left: "center",
         top: 10,
       },
@@ -94,10 +125,10 @@ export default function Dashboard() {
         trigger: "item",
         formatter: (params: any) => {
           return `
-            <b>📍 坐标</b><br/>
+            <b>📍 坐标聚合</b><br/>
             经度: ${params.value[0]}<br/>
             纬度: ${params.value[1]}<br/>
-            订单数: ${params.value[2]}
+            <b style="color:#d94e5d; font-size:14px">订单数: ${params.value[2]}</b>
           `;
         }
       },
@@ -107,7 +138,7 @@ export default function Dashboard() {
       },
       xAxis: {
         type: "value",
-        scale: true, // 自动缩放
+        scale: true,
         name: "经度",
         nameLocation: "middle",
         nameGap: 25,
@@ -115,13 +146,13 @@ export default function Dashboard() {
       },
       yAxis: {
         type: "value",
-        scale: true, // 自动缩放
+        scale: true,
         name: "纬度",
         splitLine: { show: true, lineStyle: { type: "dashed" } },
       },
       visualMap: {
         min: 0,
-        max: maxVal,
+        max: maxVal, // 现在最大值会变成 7，颜色就会拉开了
         calculable: true,
         orient: "vertical",
         right: 10,
@@ -130,9 +161,14 @@ export default function Dashboard() {
       },
       series: [
         {
-          type: "scatter", // 散点图
+          type: "scatter",
           data: formattedData,
-          symbolSize: 20,
+          // ⭐ 动态气泡大小：订单越多，圆圈越大
+          symbolSize: function (data: any) {
+            // 基础大小 15，每多一单增加一些，最大限制在 50
+            const size = 15 + (data[2] * 3); 
+            return Math.min(size, 50);
+          },
           itemStyle: {
             shadowBlur: 10,
             shadowColor: "rgba(0, 0, 0, 0.5)",
@@ -143,23 +179,17 @@ export default function Dashboard() {
       ],
     };
 
-    // D. 应用配置
     chart.setOption(option);
 
-    // E. 自动监听容器大小变化 (比 window resize 更靠谱)
     const resizeObserver = new ResizeObserver(() => {
       chart?.resize();
     });
     resizeObserver.observe(chartDomRef.current);
 
-    // 清理函数：组件卸载时断开监听、销毁图表
     return () => {
       resizeObserver.disconnect();
-      // 注意：在 React 18 开发模式下，不要轻易销毁实例，否则会闪烁
-      // 只有当组件真正卸载时，我们才不管它。
-      // chart.dispose(); 
     };
-  }, [heatmapData]); // 只要数据变了，就重新走一遍这个流程
+  }, [heatmapData]);
 
   // 计算 KPI
   const avgMins = deliveryStats

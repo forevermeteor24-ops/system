@@ -65,28 +65,34 @@ export async function createOrder(req: Request, res: Response) {
     /** 总价 = 单价 * 数量 */
     const totalPrice = price * quantity;
 
-    /** 获取用户经纬度 */
-    const { lat, lng } = actor.address; // 从用户的地址中获取经纬度
+    // 获取用户的经纬度
+    const user = await User.findById(userId).select('address');
+    if (!user?.address) {
+      return res.status(400).json({ error: "用户的地址信息缺失" });
+    }
 
-    /** 创建订单 */
+    const dest = { lng: user.address.lng, lat: user.address.lat };
+
+    // 创建订单
     const order = await OrderModel.create({
       title,
-      price,        // ⭐ 单价
-      totalPrice,   // ⭐ 总价（必填）
+      price,
+      totalPrice,
       quantity,
       address: {
         detail: address.detail,
         lng: address.lng || null,
         lat: address.lat || null,
       },
-      userLocation: { // 保存用户的经纬度
-        lat: lat || null,
-        lng: lng || null,
+      userLocation: { 
+        lat: dest.lat,
+        lng: dest.lng,
       },
-      status: "待发货",
       merchantId,
       userId,
       productId,
+      status: "待发货", // 订单状态
+      routePoints: [], // 不需要规划路线，因此不传入路线点
     });
 
     return res.status(201).json(order);
@@ -243,6 +249,7 @@ async function coreShipLogic(orderId: string, merchant: any) {
   // 5. 更新数据库
   order.status = "配送中";
   order.routePoints = points as any; 
+  // order.shippedAt = Date.now(); // 如果有这个字段
   await order.save();
 
   // 6. 启动模拟器

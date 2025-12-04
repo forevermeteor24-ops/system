@@ -25,4 +25,4 @@
     
     # 6. 启动
     # 再次提醒：请确认是 main.js 还是 index.js
-    CMD ["node", "dist/main.js"]
+    CMD ["node", "dist/index.js"]

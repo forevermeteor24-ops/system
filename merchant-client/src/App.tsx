@@ -7,6 +7,7 @@ import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Profile from "./pages/Profile";
 import Dashboard from "./pages/Dashboard"; // ⭐ 新增
+import RegionShipping from "./pages/RegionShipping";
 
 /** 强制每次访问都要求登录 */
 function ForceLogin({ children }: { children: React.ReactNode }) {
@@ -56,6 +57,14 @@ export default function App() {
         element={
           <ForceLogin>
             <Profile />
+          </ForceLogin>
+        }
+      />
+      <Route
+        path="/region-shipping"
+        element={
+          <ForceLogin>
+            <RegionShipping />
           </ForceLogin>
         }
       />

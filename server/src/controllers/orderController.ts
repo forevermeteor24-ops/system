@@ -94,18 +94,28 @@ export async function createOrder(req: Request, res: Response) {
 
 
 
-/** 获取订单列表（支持排序） */
+/** 获取订单列表（支持排序 + 状态筛选） */
 export async function getOrders(req: Request, res: Response) {
   try {
     const actor = req.user;
     if (!actor) return res.status(401).json({ error: "未登录" });
 
+    // 1. 初始化过滤条件（保留原有的权限控制）
     const filter: any = {};
     if (actor.role === "merchant") filter.merchantId = actor.userId;
     else if (actor.role === "user") filter.userId = actor.userId;
 
     /** -----------------------
-     *  ⭐ 新增排序功能
+     *  ⭐ 新增：状态筛选功能
+     *  配合前端 fetchPendingOrders 中的 ?status=待发货
+     ------------------------ */
+    const statusParam = req.query.status as string;
+    if (statusParam) {
+      filter.status = statusParam;
+    }
+
+    /** -----------------------
+     *  ⭐ 原有：排序功能
      *  sort = created_desc | created_asc | price_desc | price_asc
      ------------------------ */
     const sortParam = req.query.sort as string;
@@ -119,6 +129,7 @@ export async function getOrders(req: Request, res: Response) {
 
     const sortRule = sortMap[sortParam] || { createdAt: -1 }; // 默认按创建时间倒序
 
+    // 执行查询
     const list = await OrderModel.find(filter).sort(sortRule);
 
     return res.json(list);

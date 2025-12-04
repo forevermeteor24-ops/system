@@ -10,28 +10,41 @@ export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
+  // --- 状态管理 ---
   const [order, setOrder] = useState<any>(null);
   const [remainingTime, setRemainingTime] = useState<string>("--");
-  // ⭐ 新增：实时倒计时状态
   const [realtimeLabel, setRealtimeLabel] = useState<string>("");
   
-  // 地图相关 Ref
+  // ⭐ 新增：搜索框状态
+  const [searchId, setSearchId] = useState("");
+
+  // --- Refs ---
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
   const polylineRef = useRef<any>(null);
-  
-  // WebSocket
   const wsRef = useRef<WebSocket | null>(null);
-
-  // 状态
   const [markerReady, setMarkerReady] = useState(false); 
+
+  /* ---------------- 0. 搜索处理函数 ---------------- */
+  const handleSearch = () => {
+    if (!searchId.trim()) return;
+    // 假设用户端的路由是 /orders/:id
+    navigate(`/orders/${searchId.trim()}`);
+    setSearchId(""); 
+  };
 
   /* ---------------- 1. 加载订单 & 初始化地图 ---------------- */
   useEffect(() => {
     if (!id) return;
 
     let mounted = true;
+    
+    // 切换订单时重置状态
+    setOrder(null);
+    setRemainingTime("--");
+    setRealtimeLabel("");
+    setMarkerReady(false);
 
     (async () => {
       try {
@@ -46,13 +59,15 @@ export default function OrderDetail() {
         if (!mapInstanceRef.current) {
           mapInstanceRef.current = new AMap.Map(mapRef.current, {
             zoom: 13,
-            center: [121.47, 31.23], // 默认中心，稍后会被 fitView 覆盖
-            viewMode: "3D", // 使用 3D 视图使旋转更自然
+            center: [121.47, 31.23], 
+            viewMode: "3D", 
+            mapStyle: "amap://styles/whitesmoke", // 稍微美化地图底色
           });
 
-          // 加载动画插件
-          mapInstanceRef.current.plugin(["AMap.MoveAnimation", "AMap.ToolBar"], () => {
-             mapInstanceRef.current.addControl(new AMap.ToolBar());
+          mapInstanceRef.current.plugin(["AMap.MoveAnimation", "AMap.ToolBar", "AMap.Scale"], () => {
+             // 控件放在右下角
+             mapInstanceRef.current.addControl(new AMap.ToolBar({ position: 'RB' }));
+             mapInstanceRef.current.addControl(new AMap.Scale());
           });
         }
 
@@ -67,7 +82,6 @@ export default function OrderDetail() {
         if (points.length > 0) {
           const path = points.map((p: any) => new AMap.LngLat(p.lng, p.lat));
           
-          // 绘制蓝色轨迹线
           const polyline = new AMap.Polyline({
             path,
             strokeWeight: 6,
@@ -78,17 +92,16 @@ export default function OrderDetail() {
           map.add(polyline);
           polylineRef.current = polyline;
           
-          // 自动缩放视野以包含路径
-          map.setFitView([polyline]);
+          // 自动缩放视野 (留出边距)
+          map.setFitView([polyline], true, [60, 60, 60, 60]);
 
-          // 创建小车 Marker
           const startPos = o.trackState?.lastPosition 
             ? new AMap.LngLat(o.trackState.lastPosition.lng, o.trackState.lastPosition.lat)
             : path[0];
 
           const carIcon = new AMap.Icon({
             size: new AMap.Size(52, 26),
-            image: "https://cdn-icons-png.flaticon.com/512/3097/3097136.png", // 这里的图标是俯视图小车，效果更好
+            image: "https://cdn-icons-png.flaticon.com/512/3097/3097136.png",
             imageSize: new AMap.Size(52, 26),
             imageOffset: new AMap.Pixel(0, 0)
           });
@@ -96,8 +109,7 @@ export default function OrderDetail() {
           const marker = new AMap.Marker({
             position: startPos,
             icon: carIcon,
-            offset: new AMap.Pixel(-26, -13), // 居中锚点
-            angle: 0, 
+            offset: new AMap.Pixel(-26, -13),
             zIndex: 100,
           });
 
@@ -108,6 +120,7 @@ export default function OrderDetail() {
 
       } catch (err) {
         console.error("加载失败", err);
+        if(mounted) alert("未找到该订单");
       }
     })();
 
@@ -116,93 +129,55 @@ export default function OrderDetail() {
 
   /* ---------------- 2. WebSocket 实时追踪 ---------------- */
   useEffect(() => {
-    // 只有在“配送中”且地图Marker准备好时才连接 WS
     if (!order || order.status !== "配送中" || !markerReady) return;
-
-    // 清理旧连接
     if (wsRef.current) wsRef.current.close();
 
-    const ws = new WebSocket("wss://system-backend.zeabur.app"); // 替换为你的真实地址
+    const ws = new WebSocket("wss://system-backend.zeabur.app");
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log("🔗 WS 已连接");
       ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
-    
-    // ⭐ 新增：断线重连/刷新页面后的“激活”逻辑 ⭐
-    // ==========================================
-    if (order.status === "配送中"
-    ) {
-          console.log("正在尝试恢复轨迹...");
-      // 发送 start-track 命令。
-      // 后端逻辑是：如果 player 不存在会新建；如果存在会复用；
-      // 并且会调用 restoreState 从数据库读取进度，不会从头开始，而是从断点继续。
-      ws.send(JSON.stringify({ 
-        type: "start-track", 
-        orderId: order._id,
-        points: order.routePoints // 必须把路径再次传给后端，防止后端重启丢失路径数据
-      }));
-      }
     };
+    
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        // ⭐ 处理剩余时间更新
         if (msg.remainingSeconds !== undefined) {
-          // 将秒转换为友好格式 (如: 1小时 5分钟)
           const hrs = Math.floor(msg.remainingSeconds / 3600);
           const mins = Math.floor((msg.remainingSeconds % 3600) / 60);
           const secs = Math.floor(msg.remainingSeconds % 60);
-          
           let label = "";
           if (hrs > 0) label += `${hrs}小时 `;
-          if (mins > 0 || hrs > 0) label += `${mins}分钟 `;
+          if (mins > 0 || hrs > 0) label += `${mins}分 `;
           label += `${secs}秒`;
-          
           setRealtimeLabel(label);
        }
         
-        // 处理位置更新
         if (msg.type === "location" && markerRef.current) {
-          
-          // 如果后端传来了 nextPosition 和 duration，说明可以进行平滑移动
           if (msg.nextPosition && msg.duration > 0) {
             const nextLngLat = new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat);
-            
-            // 核心动画：moveTo
-            // autoRotation: true 会让车头自动对准路径方向
             markerRef.current.moveTo(nextLngLat, {
-              duration: msg.duration, // 毫秒，与后端完全同步
+              duration: msg.duration, 
               autoRotation: true,
             });
-
-            // 可选：让地图中心跟随小车 (如果希望视角锁定)
-            // mapInstanceRef.current.panTo(nextLngLat);
-          } 
-          // 兜底：如果是直接位置更新（无 duration）或已完成
-          else if (msg.position) {
+          } else if (msg.position) {
              const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
              markerRef.current.setPosition(pos);
           }
-
           if (msg.finished) {
             setOrder((prev: any) => ({ ...prev, status: "已送达" }));
           }
         }
-      } catch (e) {
-        console.error("WS 解析错误", e);
-      }
+      } catch (e) { console.error(e); }
     };
 
-    return () => {
-      if (ws.readyState === 1) ws.close();
-    };
+    return () => { if (ws.readyState === 1) ws.close(); };
   }, [order?._id, order?.status, markerReady]);
 
-  /* ---------------- 3. 辅助功能：倒计时与按钮 ---------------- */
+  /* ---------------- 3. 辅助功能 ---------------- */
   useEffect(() => {
     if (!order?.eta || ["已送达", "已完成", "商家已取消"].includes(order?.status)) {
-      if (order?.status !== "配送中") setRemainingTime("已结束");
+      setRemainingTime("配送结束");
       return;
     }
     const timer = setInterval(() => {
@@ -230,25 +205,50 @@ export default function OrderDetail() {
   };
 
   /* ---------------- 4. 渲染视图 ---------------- */
+  
+  // 提取商家信息 (兼容 populate 后的对象)
+  const merchantInfo = order && typeof order.merchantId === 'object' ? order.merchantId : null;
+  const shopName = merchantInfo?.username || "未知商家";
+  const shopPhone = merchantInfo?.phone || "暂无电话";
+
   return (
     <div style={styles.container}>
-      {/* 顶部导航面包屑 */}
+      
+      {/* 🟢 Header：包含搜索栏 */}
       <div style={styles.header}>
-        <Link to="/orders" style={styles.backLink}>← 返回订单列表</Link>
-        <span style={{color: '#999'}}> / 订单详情</span>
+        <div style={styles.headerLeft}>
+            <Link to="/orders" style={styles.backLink}>
+              <span style={{marginRight: '6px'}}>←</span> 返回列表
+            </Link>
+            <span style={styles.breadcrumbSeparator}>/</span>
+            <span style={styles.breadcrumbCurrent}>订单详情</span>
+        </div>
+        
+        <div style={styles.searchContainer}>
+            <input 
+                type="text" 
+                placeholder="搜索订单 ID..." 
+                value={searchId}
+                onChange={(e) => setSearchId(e.target.value)}
+                style={styles.searchInput}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            />
+            <button onClick={handleSearch} style={styles.searchBtn}>
+               🔍 搜索
+            </button>
+        </div>
       </div>
 
       <div style={styles.content}>
         {/* 左侧：信息面板 */}
         <div style={styles.leftPanel}>
-          {/* 状态卡片 */}
           <div style={styles.card}>
              <div style={styles.statusHeader}>
-               <div style={{fontSize: '14px', color: '#666'}}>当前状态</div>
-               <div style={{fontSize: '24px', fontWeight: 'bold', color: '#1890ff', margin: '5px 0'}}>
+               <div style={{fontSize: '13px', color: '#888', marginBottom: '4px'}}>当前状态</div>
+               <div style={{fontSize: '26px', fontWeight: '800', color: '#1890ff', letterSpacing: '1px'}}>
                  {order?.status || "加载中..."}
                </div>
-               {/* ⭐ 修改这里：优先显示实时计算的时间 */}
+               
                {order?.status === "配送中" && (
                  <div style={styles.etaBadge}>
                    预计送达: {realtimeLabel || remainingTime}
@@ -259,21 +259,14 @@ export default function OrderDetail() {
              <div style={styles.divider} />
 
              {/* 订单信息 */}
-             <div style={styles.infoRow}>
-               <span style={styles.label}>商品</span>
-               <span style={styles.value}>{order?.title}</span>
-             </div>
-             <div style={styles.infoRow}>
-               <span style={styles.label}>金额</span>
-               <span style={styles.value}>¥{order?.totalPrice || order?.price}</span>
-             </div>
-             <div style={styles.infoRow}>
-               <span style={styles.label}>地址</span>
-               <span style={styles.value}>{order?.address?.detail}</span>
+             <div style={styles.infoGroup}>
+                <InfoItem label="商品名称" value={order?.title} />
+                <InfoItem label="订单金额" value={`¥${order?.totalPrice || order?.price}`} highlight />
+                <InfoItem label="配送地址" value={order?.address?.detail} />
              </div>
              
              {/* 按钮组 */}
-             <div style={{marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap'}}>
+             <div style={styles.actionGroup}>
                {order?.status === "已送达" && (
                  <button style={styles.btnPrimary} onClick={() => doAction('confirm')}>确认收货</button>
                )}
@@ -288,17 +281,51 @@ export default function OrderDetail() {
 
           {/* 物流时间轴 */}
           <div style={{...styles.card, flex: 1}}>
-            <h3 style={{margin: '0 0 15px 0', fontSize: '16px'}}>物流进度</h3>
+            <h3 style={{margin: '0 0 20px 0', fontSize: '16px'}}>物流进度</h3>
             <Timeline status={order?.status} deliveredTime={order?.deliveredAt} />
           </div>
         </div>
 
         {/* 右侧：地图 */}
         <div style={styles.mapPanel}>
-          <div ref={mapRef} style={{width: '100%', height: '100%', borderRadius: '12px'}} />
+          <div ref={mapRef} style={{width: '100%', height: '100%'}} />
+          
+          {/* ⭐ 悬浮卡片：商家信息 */}
+          {order && (
+            <div style={styles.merchantCard}>
+                <div style={styles.merchantHeader}>
+                    {/* 橙色头像代表商家 */}
+                    <div style={styles.avatarPlaceholder}>
+                       商
+                    </div>
+                    <div>
+                        <div style={styles.merchantName}>{shopName}</div>
+                        <div style={styles.merchantLabel}>配送商家</div>
+                    </div>
+                </div>
+                <div style={styles.dividerMin}></div>
+                <div style={styles.phoneRow}>
+                    <span style={{fontSize: '16px'}}>📞</span> 
+                    <span style={styles.phoneText}>{shopPhone}</span>
+                    <button 
+                        style={styles.btnMiniCopy} 
+                        onClick={() => {
+                           if(shopPhone && shopPhone !== "暂无电话") {
+                               navigator.clipboard.writeText(shopPhone); 
+                               alert("商家电话已复制"); 
+                           }
+                        }}
+                    >
+                        复制
+                    </button>
+                </div>
+            </div>
+          )}
+
+          {/* 实时监控标签 */}
           {order?.status === "配送中" && (
             <div style={styles.mapOverlay}>
-              <span className="pulse-dot"></span> 实时配送中
+              <span style={styles.pulsingDot}></span> 实时配送中
             </div>
           )}
         </div>
@@ -307,7 +334,20 @@ export default function OrderDetail() {
   );
 }
 
-// 简单的 Timeline 组件
+// --- 子组件 ---
+const InfoItem = ({ label, value, highlight, copyable }: any) => (
+  <div style={styles.infoRow}>
+    <span style={styles.label}>{label}</span>
+    <span 
+      style={{...styles.value, color: highlight ? '#fa8c16' : '#333', cursor: copyable ? 'pointer' : 'default'}}
+      onClick={() => copyable && value && navigator.clipboard.writeText(value)}
+      title={copyable ? "点击复制" : ""}
+    >
+      {value}
+    </span>
+  </div>
+);
+
 const Timeline = ({ status, deliveredTime }: { status: string, deliveredTime?: string }) => {
   const steps = [
     { key: "待发货", label: "商家接单", time: "" },
@@ -316,30 +356,30 @@ const Timeline = ({ status, deliveredTime }: { status: string, deliveredTime?: s
     { key: "已完成", label: "订单完成", time: "" },
   ];
   
-  // 简单的状态映射索引
   const statusIdx = steps.findIndex(s => s.key === status);
   const activeIdx = statusIdx === -1 ? (status === "商家已取消" ? -1 : 0) : statusIdx;
 
   return (
-    <div style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
+    <div style={{display: 'flex', flexDirection: 'column', gap: '24px', paddingLeft: '8px'}}>
       {steps.map((step, idx) => {
         const isActive = idx <= activeIdx;
-        const isCurrent = idx === activeIdx;
         return (
-          <div key={step.key} style={{display: 'flex', gap: '12px'}}>
-             <div style={{display:'flex', flexDirection:'column', alignItems:'center'}}>
-                <div style={{
-                  width: '12px', height: '12px', borderRadius: '50%', 
-                  background: isActive ? '#1890ff' : '#eee',
-                  border: isCurrent ? '3px solid #e6f7ff' : 'none'
-                }} />
-                {idx !== steps.length - 1 && <div style={{width: '2px', flex: 1, background: isActive ? '#1890ff' : '#eee', margin: '4px 0'}} />}
-             </div>
+          <div key={step.key} style={{display: 'flex', gap: '15px', position: 'relative'}}>
+             {idx !== steps.length - 1 && (
+               <div style={{
+                 position: 'absolute', left: '6px', top: '18px', bottom: '-26px', width: '2px', 
+                 background: isActive && idx < activeIdx ? '#1890ff' : '#f0f0f0' 
+               }} />
+             )}
+             <div style={{
+               width: '14px', height: '14px', borderRadius: '50%', border: isActive ? '3px solid #d6e4ff' : '3px solid transparent',
+               background: isActive ? '#1890ff' : '#ddd', zIndex: 1, flexShrink: 0
+             }} />
              <div>
-               <div style={{color: isActive ? '#333' : '#999', fontWeight: isActive ? 'bold' : 'normal'}}>
+               <div style={{color: isActive ? '#333' : '#bbb', fontWeight: isActive ? '600' : '400', fontSize: '14px'}}>
                  {step.label}
                </div>
-               {step.time && <div style={{fontSize: '12px', color: '#999'}}>{step.time}</div>}
+               {step.time && <div style={{fontSize: '12px', color: '#999', marginTop: '2px'}}>{step.time}</div>}
              </div>
           </div>
         )
@@ -348,27 +388,73 @@ const Timeline = ({ status, deliveredTime }: { status: string, deliveredTime?: s
   )
 }
 
-// 样式对象
+// --- 样式表 ---
 const styles: Record<string, any> = {
-  container: { maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: "'Segoe UI', Roboto, sans-serif", minHeight: '100vh', boxSizing: 'border-box' },
-  header: { marginBottom: '20px' },
-  backLink: { textDecoration: 'none', color: '#1890ff', fontWeight: 500 },
-  content: { display: 'flex', gap: '20px', height: 'calc(100vh - 100px)', flexWrap: 'wrap' },
-  leftPanel: { flex: '1', minWidth: '300px', display: 'flex', flexDirection: 'column', gap: '20px' },
-  mapPanel: { flex: '2', minWidth: '400px', background: '#fff', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', position: 'relative' },
-  card: { background: '#fff', borderRadius: '12px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
+  container: { maxWidth: '1400px', margin: '0 auto', padding: '24px', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", background: '#f7f8fa', minHeight: '100vh', boxSizing: 'border-box' },
   
-  statusHeader: { textAlign: 'center', paddingBottom: '15px' },
-  etaBadge: { display: 'inline-block', background: '#e6f7ff', color: '#1890ff', padding: '4px 10px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold' },
-  divider: { height: '1px', background: '#f0f0f0', margin: '0 0 15px 0' },
+  header: { marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '16px 24px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
+  headerLeft: { display: 'flex', alignItems: 'center', fontSize: '15px' },
+  backLink: { textDecoration: 'none', color: '#666', fontWeight: 500, display: 'flex', alignItems: 'center' },
+  breadcrumbSeparator: { margin: '0 10px', color: '#ddd' },
+  breadcrumbCurrent: { color: '#1890ff', fontWeight: 600 },
   
-  infoRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '14px' },
-  label: { color: '#888' },
-  value: { color: '#333', fontWeight: 500, textAlign: 'right', maxWidth: '60%' },
-  
-  btnPrimary: { background: "#1890ff", color: "white", border: "none", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", flex: 1 },
-  btnDangerGhost: { background: "white", color: "#ff4d4f", border: "1px solid #ff4d4f", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", flex: 1 },
-  btnGhost: { background: "white", color: "#666", border: "1px solid #ddd", padding: "8px 16px", borderRadius: "6px", cursor: "pointer", flex: 1 },
+  // 搜索栏
+  searchContainer: { display: 'flex', gap: '0', boxShadow: '0 2px 6px rgba(0,0,0,0.05)', borderRadius: '6px' },
+  searchInput: { padding: '8px 16px', border: '1px solid #d9d9d9', borderRight: 'none', borderRadius: '6px 0 0 6px', outline: 'none', width: '240px', fontSize: '14px' },
+  searchBtn: { padding: '8px 20px', border: 'none', background: '#1890ff', color: 'white', borderRadius: '0 6px 6px 0', cursor: 'pointer', fontWeight: 500 },
 
-  mapOverlay: { position: 'absolute', top: '20px', left: '20px', background: 'rgba(255,255,255,0.9)', padding: '8px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', boxShadow: '0 2px 5px rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', gap: '6px', color: '#1890ff' },
+  content: { display: 'flex', gap: '24px', height: 'calc(100vh - 140px)' },
+  leftPanel: { flex: '0 0 360px', display: 'flex', flexDirection: 'column', gap: '24px' },
+  mapPanel: { flex: '1', background: '#fff', borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', position: 'relative', overflow: 'hidden' },
+  card: { background: '#fff', borderRadius: '16px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
+  
+  statusHeader: { textAlign: 'center', paddingBottom: '20px' },
+  etaBadge: { display: 'inline-block', background: '#e6f7ff', color: '#1890ff', padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '600', marginTop: '8px' },
+  divider: { height: '1px', background: '#f0f0f0', margin: '0 0 20px 0' },
+  
+  infoGroup: { display: 'flex', flexDirection: 'column', gap: '16px' },
+  infoRow: { display: 'flex', justifyContent: 'space-between', fontSize: '14px', alignItems: 'center' },
+  label: { color: '#888' },
+  value: { color: '#333', fontWeight: 500, textAlign: 'right', maxWidth: '65%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+
+  actionGroup: { marginTop: '30px', display: 'flex', gap: '12px' },
+  btnPrimary: { background: "#1890ff", color: "white", border: "none", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1, fontWeight: 600 },
+  btnDangerGhost: { background: "white", color: "#ff4d4f", border: "1px solid #ff4d4f", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1, fontWeight: 600 },
+  btnGhost: { background: "white", color: "#666", border: "1px solid #ddd", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1 },
+
+  // ⭐ 商家悬浮卡片
+  merchantCard: {
+    position: 'absolute', top: '24px', left: '24px', zIndex: 150,
+    background: 'rgba(255, 255, 255, 0.98)', backdropFilter: 'blur(10px)',
+    padding: '16px 20px', borderRadius: '12px',
+    boxShadow: '0 8px 20px rgba(0,0,0,0.08)', minWidth: '240px',
+    border: '1px solid rgba(255,255,255,0.8)'
+  },
+  merchantHeader: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' },
+  avatarPlaceholder: { 
+    width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+    fontSize: '18px', fontWeight: 'bold', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' 
+  },
+  merchantName: { fontWeight: '700', fontSize: '16px', color: '#333' },
+  merchantLabel: { fontSize: '12px', color: '#999', marginTop: '2px' },
+  dividerMin: { height: '1px', background: '#eee', margin: '4px 0 12px 0' },
+  phoneRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  phoneText: { fontWeight: '600', fontSize: '15px', color: '#333', letterSpacing: '0.5px' },
+  btnMiniCopy: { 
+    marginLeft: 'auto', fontSize: '12px', padding: '4px 10px', 
+    background: '#f0f2f5', color: '#666', border: 'none', 
+    borderRadius: '4px', cursor: 'pointer' 
+  },
+
+  // Map Overlay
+  mapOverlay: { 
+    position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
+    background: 'rgba(0,0,0,0.7)', color: 'white', padding: '8px 16px', borderRadius: '30px', 
+    fontSize: '13px', fontWeight: '500', boxShadow: '0 4px 10px rgba(0,0,0,0.2)', 
+    display: 'flex', alignItems: 'center', gap: '8px', zIndex: 100
+  },
+  pulsingDot: {
+    width: '8px', height: '8px', background: '#52c41a', borderRadius: '50%', 
+    boxShadow: '0 0 0 2px rgba(82, 196, 26, 0.4)'
+  }
 };

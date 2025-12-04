@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "kid-chart-marcus-driven.trycloudflare.com"
+      "hon-condos-telecommunications-accomplished.trycloudflare.com"
     ],
   },
 });

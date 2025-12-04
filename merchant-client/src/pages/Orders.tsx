@@ -30,7 +30,7 @@ export default function MerchantHome() {
   
   // === 核心数据状态 ===
   const [merchantId, setMerchantId] = useState<string>("");
-  const [merchantName, setMerchantName] = useState<string>("商家中心"); // 新增：商家名称状态
+  const [merchantName, setMerchantName] = useState<string>("商家中心");
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +50,6 @@ export default function MerchantHome() {
   // === 初始化加载 ===
   useEffect(() => {
     const id = localStorage.getItem("merchantId");
-    // 尝试获取商家名称，如果没有则默认
     const name = localStorage.getItem("username") || localStorage.getItem("merchantName") || "我的店铺";
     
     if (!id) {
@@ -183,32 +182,16 @@ export default function MerchantHome() {
 
   return (
     <div className="merchant-dashboard" style={styles.page}>
-      {/* 顶栏：修改了标题显示和按钮组 */}
+      {/* 顶栏 */}
       <header style={styles.navbar}>
         <div style={{display:'flex', flexDirection:'column'}}>
-          {/* 这里显示商家名称 */}
           <h2 style={{margin:0, fontSize: '20px', color: '#333'}}>{merchantName}</h2>
           <span style={{fontSize: '12px', color: '#888'}}>ID: {merchantId}</span>
         </div>
         
         <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
-           {/* 新增 Dashboard 按钮 */}
-           <button 
-             style={styles.btnSecondary} 
-             onClick={() => navigate('/dashboard')}
-           >
-             📊 Dashboard
-           </button>
-
-           {/* 新增 资料 按钮 */}
-           <button 
-             style={styles.btnSecondary} 
-             onClick={() => navigate('/merchant/profile')}
-           >
-             👤 资料
-           </button>
-
-           {/* 退出按钮 */}
+           <button style={styles.btnSecondary} onClick={() => navigate('/dashboard')}>📊 Dashboard</button>
+           <button style={styles.btnSecondary} onClick={() => navigate('/merchant/profile')}>👤 资料</button>
            <button
             style={styles.btnDanger}
             onClick={() => {
@@ -270,7 +253,7 @@ export default function MerchantHome() {
               </div>
             )}
 
-            {/* ---------------- 视图 2: 订单管理 (样式已调小，逻辑已修改) ---------------- */}
+            {/* ---------------- 视图 2: 订单管理 (含地图批量发货) ---------------- */}
             {activeTab === 'orders' && (
               <div>
                 <div style={styles.toolbar}>
@@ -286,17 +269,43 @@ export default function MerchantHome() {
                     ))}
                   </div>
 
-                  <div style={styles.sortGroup}>
-                    <select 
-                      value={sortOption} 
-                      onChange={(e) => setSortOption(e.target.value as SortOption)}
-                      style={styles.selectInput}
+                  {/* 右侧：功能按钮与排序 */}
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    
+                    {/* ⭐ 新增：跳转到区域批量发货页面 */}
+                    <button 
+                      onClick={() => navigate('/region-shipping')}
+                      style={{
+                        padding: '6px 12px',
+                        background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        boxShadow: '0 2px 6px rgba(24, 144, 255, 0.2)'
+                      }}
+                      title="在地图上框选区域进行批量发货"
                     >
-                      <option value="newest">📅 下单时间 (新→旧)</option>
-                      <option value="oldest">📅 下单时间 (旧→新)</option>
-                      <option value="price_high">💰 金额 (高→低)</option>
-                      <option value="price_low">💰 金额 (低→高)</option>
-                    </select>
+                      🗺️ 地图批量发货
+                    </button>
+
+                    <div style={styles.sortGroup}>
+                      <select 
+                        value={sortOption} 
+                        onChange={(e) => setSortOption(e.target.value as SortOption)}
+                        style={styles.selectInput}
+                      >
+                        <option value="newest">📅 下单时间 (新→旧)</option>
+                        <option value="oldest">📅 下单时间 (旧→新)</option>
+                        <option value="price_high">💰 金额 (高→低)</option>
+                        <option value="price_low">💰 金额 (低→高)</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -305,7 +314,7 @@ export default function MerchantHome() {
                     <div style={styles.emptyMsg}>在此条件下暂无订单</div>
                   ) : (
                     displayedOrders.map((o) => (
-                      <div key={o._id} style={styles.orderItemCompact}> {/* 使用新的紧凑样式 */}
+                      <div key={o._id} style={styles.orderItemCompact}>
                         
                         {/* 头部：标题、时间、状态 */}
                         <div style={styles.orderHeaderCompact}>
@@ -342,7 +351,6 @@ export default function MerchantHome() {
                               <button style={styles.btnDangerSmall} onClick={() => doCancelByMerchant(o._id)}>同意退款</button>
                             )}
                             
-                            {/* 修改：只有 "商家已取消" 或 "已完成" 才显示删除按钮 */}
                             {(o.status === "商家已取消" || o.status === "已完成") && (
                               <button style={styles.btnGhostSmall} onClick={() => doDelete(o._id)}>删除记录</button>
                             )}
@@ -415,12 +423,12 @@ export default function MerchantHome() {
   );
 }
 
-// === 更新后的样式表 ===
+// 💅 样式表 (包含所有缺失的属性)
 const styles: Record<string, any> = {
   page: { padding: "20px", fontFamily: "'Segoe UI', Roboto, sans-serif", background: "#f3f4f6", minHeight: "100vh" },
-  // 更新后的 Navbar
+  
+  // Navbar
   navbar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", background: "#ffffff", borderRadius: "10px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: "20px" },
-  badge: { background: "#e6f7ff", color: "#1890ff", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" },
   
   // Tabs
   tabContainer: { display: 'flex', gap: '5px', marginBottom: '15px' },
@@ -430,16 +438,16 @@ const styles: Record<string, any> = {
   // Content Area
   contentArea: { background: '#fff', borderRadius: '12px', padding: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.02)', minHeight: '500px' },
   
-  // Toolbar
+  // Toolbar & Filters
   toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #f0f0f0' },
   filterGroup: { display: 'flex', gap: '6px', overflowX: 'auto' },
-  filterBtn: { padding: '4px 10px', border: '1px solid #eee', background: '#f9f9f9', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', color: '#666', transition: 'all 0.2s' },
-  filterBtnActive: { padding: '4px 10px', border: '1px solid #1890ff', background: '#e6f7ff', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', color: '#1890ff', fontWeight: 'bold' },
+  filterBtn: { padding: '4px 10px', border: '1px solid #eee', background: '#f9f9f9', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', color: '#666', transition: 'all 0.2s', whiteSpace: 'nowrap' },
+  filterBtnActive: { padding: '4px 10px', border: '1px solid #1890ff', background: '#e6f7ff', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', color: '#1890ff', fontWeight: 'bold', whiteSpace: 'nowrap' },
   sortGroup: { display: 'flex', alignItems: 'center' },
   selectInput: { padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px', outline: 'none' },
 
-  // === 紧凑型订单样式 (New) ===
-  listContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '12px' }, // 改为 Grid 布局，更省空间
+  // List & Items (Compact)
+  listContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '12px' },
   orderItemCompact: { 
     border: '1px solid #eaeaea', 
     borderRadius: '8px', 
@@ -454,12 +462,14 @@ const styles: Record<string, any> = {
   orderBodyCompact: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   orderFooterCompact: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '5px' },
 
+  // Helpers
   statusBadge: (status: string) => {
     const map: any = { "待发货": "#fa8c16", "已送达": "#52c41a", "已完成": "#13c2c2", "配送中": "#1890ff", "商家已取消": "#999", "用户申请退货": "#f5222d" };
     return { background: map[status] || '#eee', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', transform: 'scale(0.95)' }
   },
+  emptyMsg: { textAlign: 'center' as 'center', padding: '40px', color: '#999', fontSize: '15px' },
 
-  // Buttons & Forms
+  // Buttons
   btnSecondary: { background: "#f0f2f5", color: "#333", border: "1px solid #d9d9d9", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: '13px', transition: 'all 0.2s' },
   btnPrimary: { background: "#1890ff", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
   btnDanger: { background: "#ff4d4f", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: '13px' },
@@ -467,17 +477,17 @@ const styles: Record<string, any> = {
   btnGhost: { background: "transparent", color: "#666", border: "1px solid #ddd", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
   btnDangerGhost: { background: "transparent", color: "#ff4d4f", border: "1px solid #ffa39e", padding: "6px 12px", borderRadius: "6px", cursor: "pointer" },
   
-  // Small Buttons for Compact View
+  // Small Buttons
   btnPrimarySmall: { background: "#1890ff", color: "white", border: "none", padding: "4px 10px", borderRadius: "4px", cursor: "pointer", fontSize: '12px' },
   btnDangerSmall: { background: "#ff4d4f", color: "white", border: "none", padding: "4px 10px", borderRadius: "4px", cursor: "pointer", fontSize: '12px' },
   btnGhostSmall: { background: "white", color: "#999", border: "1px solid #eee", padding: "4px 8px", borderRadius: "4px", cursor: "pointer", fontSize: '12px' },
   linkBtnSmall: { color: "#1890ff", textDecoration: 'none', fontSize: '12px' },
 
-  // Grid / Cards
+  // Grid / Dashboard Cards
   gridContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' },
   card: { padding: '25px', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.05)', display:'flex', flexDirection:'column', justifyContent:'center' },
   
-  // Product Grid
+  // Products
   productList: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "20px" },
   productCard: { border: '1px solid #eee', borderRadius: '10px', padding: '15px', display:'flex', flexDirection:'column', alignItems:'center' },
   productIcon: { fontSize: '40px', marginBottom: '10px', background: '#f0f5ff', width: '80px', height: '80px', display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '50%' },
@@ -489,5 +499,4 @@ const styles: Record<string, any> = {
   label: { display: 'block', marginBottom: '5px', color: '#666', fontSize: '14px' },
   input: { width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px' },
   modalActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' },
-  emptyMsg: { textAlign: 'center' as 'center', padding: '40px', color: '#999', fontSize: '15px' },
 };

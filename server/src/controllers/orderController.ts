@@ -18,7 +18,7 @@ export async function createOrder(req: Request, res: Response) {
   try {
     const {
       title,
-      address,
+      address, // 前端传来的地址对象，可能只有 detail
       productId,
       merchantId: bodyMerchantId,
       userId: bodyUserId,
@@ -59,19 +59,22 @@ export async function createOrder(req: Request, res: Response) {
       return res.status(403).json({ error: "商品不属于该商家" });
     }
 
-    /** 单价 */
     const price = product.price;
-
-    /** 总价 = 单价 * 数量 */
     const totalPrice = price * quantity;
 
-    // 获取用户的经纬度
+    // 1. 获取用户在数据库中存的地址信息（包含经纬度）
     const user = await User.findById(userId).select('address');
-    if (!user?.address) {
-      return res.status(400).json({ error: "用户的地址信息缺失" });
-    }
+    
+    // 2. 提取经纬度 (如果数据库里也没有，就只能是 null 了)
+    const userLng = user?.address?.lng || null;
+    const userLat = user?.address?.lat || null;
 
-    const dest = { lng: user.address.lng, lat: user.address.lat };
+    // 如果不仅前端没传，数据库里也没存，最好报错提示用户去完善个人信息
+    if (userLng === null || userLat === null) {
+      // 这里的逻辑看你需求：是直接报错，还是允许创建无坐标订单？
+      // 为了地图功能正常，建议报错或给个默认值
+      // return res.status(400).json({ error: "您的账户地址未设置经纬度，请先去个人中心完善地址信息。" });
+    }
 
     // 创建订单
     const order = await OrderModel.create({
@@ -81,18 +84,21 @@ export async function createOrder(req: Request, res: Response) {
       quantity,
       address: {
         detail: address.detail,
-        lng: address.lng || null,
-        lat: address.lat || null,
+        // ⭐ 修正点：优先使用前端传的坐标（如果有），否则使用数据库里查到的用户坐标
+        lng: address.lng || userLng, 
+        lat: address.lat || userLat,
       },
+      // 这个 userLocation 可能是冗余的，看你其他地方用不用，
+      // 地图组件主要看的是上面的 address.lng/lat
       userLocation: { 
-        lat: dest.lat,
-        lng: dest.lng,
+        lng: address.lng || userLng,
+        lat: address.lat || userLat,
       },
       merchantId,
       userId,
       productId,
-      status: "待发货", // 订单状态
-      routePoints: [], // 不需要规划路线，因此不传入路线点
+      status: "待发货",
+      routePoints: [],
     });
 
     return res.status(201).json(order);
@@ -104,8 +110,6 @@ export async function createOrder(req: Request, res: Response) {
     });
   }
 }
-
-
 
 
 /** 获取订单列表（支持排序 + 状态筛选） */

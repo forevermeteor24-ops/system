@@ -204,110 +204,140 @@ export async function getOrder(req: Request, res: Response) {
     return res.status(500).json({ error: "获取订单失败" });
   }
 }
-// 核心发货逻辑 (公共函数)
-// ==========================================
-async function coreShipLogic(orderId: string, merchant: any) {
-  // 1. 查订单
+// --- 辅助函数：确保商家有坐标 ---
+// 如果数据库里有，直接返回；如果没有，调API查并存入数据库
+async function ensureMerchantGeo(merchant: any) {
+  let geo = { lng: merchant.address?.lng, lat: merchant.address?.lat };
+
+  // 如果坐标缺失，进行补全
+  if (!geo.lng || !geo.lat) {
+    if (!merchant.address?.detail) {
+      throw new Error("商家发货地址不完整，无法计算坐标");
+    }
+    // 调用地图 API
+    const newGeo = await geocodeAddress(merchant.address.detail);
+    
+    // 更新数据库 (以免下次还要查)
+    merchant.address.lng = newGeo.lng;
+    merchant.address.lat = newGeo.lat;
+    await merchant.save();
+    
+    geo = newGeo;
+  }
+  return geo;
+}
+
+// --- 核心逻辑：只负责算路和更新订单 ---
+// 参数变更：不再接收整个 merchant 对象，而是接收明确的 ID 和 坐标
+async function coreShipLogic(orderId: string, merchantId: string, merchantGeo: { lat: number, lng: number }) {
   const order = await OrderModel.findById(orderId);
   if (!order) throw new Error(`订单不存在`);
   
-  // 2. 状态校验
   if (order.status !== '待发货') {
-    throw new Error(`订单 ${order.title} 状态不正确 (${order.status})`);
+    throw new Error(`订单状态不正确 (${order.status})`);
   }
-  if (order.merchantId.toString() !== merchant._id.toString()) {
-    throw new Error(`订单 ${order.title} 归属权错误`);
-  }
-
-  // 3. 地址与坐标处理
-  const shopAddress = merchant.address;
-  const userAddress = order.address;
-
-  if (!shopAddress?.detail || !userAddress?.detail) {
-    throw new Error(`订单 ${order.title} 地址信息缺失`);
+  // 校验归属权
+  if (order.merchantId.toString() !== merchantId.toString()) {
+    throw new Error(`订单归属权错误`);
   }
 
-  let origin = { lng: shopAddress.lng, lat: shopAddress.lat };
-  let dest = { lng: userAddress.lng, lat: userAddress.lat };
-
-  // 补全商家坐标
-  if (!origin.lng || !origin.lat) {
-    const geo = await geocodeAddress(shopAddress.detail);
-    origin = geo;
-    // 顺便更新商家信息，避免下次重复查
-    await User.findByIdAndUpdate(merchant._id, { 'address.lng': geo.lng, 'address.lat': geo.lat });
-  }
-
-  // 补全用户坐标
+  // 1. 起点：直接用传入的商家坐标 (高效)
+  const origin = merchantGeo;
+  
+  // 2. 终点：用户坐标 (如果没有则补全)
+  let dest = { lng: order.address.lng, lat: order.address.lat };
   if (!dest.lng || !dest.lat) {
-    const geo = await geocodeAddress(userAddress.detail);
+    const geo = await geocodeAddress(order.address.detail);
     dest = geo;
     order.address.lng = geo.lng;
     order.address.lat = geo.lat;
   }
 
-  // 4. 路线规划 (耗时操作)
+  // 3. 规划路线
   const route = await planRoute(origin, dest);
   const points = parseRouteToPoints(route);
 
-  // 5. 更新数据库
+  // 4. 更新订单
   order.status = "配送中";
   order.routePoints = points as any; 
-  // order.shippedAt = Date.now(); // 如果有这个字段
   await order.save();
 
-  // 6. 启动模拟器
+  // 5. 启动模拟
   startTrack(orderId, points);
 
   return order;
 }
-
 // 接口：单个发货 (保留原有入口，但在内部调用 coreShipLogic)
 // ==========================================
 export const shipOrder = async (req: Request, res: Response) => {
   try {
     const actor = (req as any).user;
     const merchant = await User.findById(actor.userId);
-    const result = await coreShipLogic(req.params.id, merchant);
+    if (!merchant) throw new Error("商家不存在");
+
+    // 1. 复用辅助函数，获取商家坐标
+    const merchantGeo = await ensureMerchantGeo(merchant);
+
+    // 2. 调用更新后的核心逻辑
+    // 注意参数变化：传 ID 和 坐标，而不是整个 merchant
+    const result = await coreShipLogic(
+      req.params.id, 
+      merchant._id.toString(), // <--- 关键修改
+      merchantGeo
+    );
+    
     res.json(result);
   } catch (err: any) {
+    console.error("Single ship error:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 // ==========================================
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 export const batchShipOrders = async (req: Request, res: Response) => {
   try {
     const actor = (req as any).user;
-    const { orderIds } = req.body; // Array of strings
+    const { orderIds } = req.body;
 
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ message: '请选择订单' });
     }
 
-    // 获取商家信息 (只查一次)
     const merchant = await User.findById(actor.userId);
     if (!merchant) return res.status(404).json({ message: "商家不存在" });
 
-    // 并发处理 (使用 allSettled 防止单单失败影响整体)
-    const results = await Promise.allSettled(
-      orderIds.map(id => coreShipLogic(id, merchant))
-    );
+    // 1. 预处理：只调用一次辅助函数，拿到坐标
+    // 即使发100单，也只查1次数据库，修补1次坐标
+    const merchantGeo = await ensureMerchantGeo(merchant);
 
-    // 统计结果
-    const successCount = results.filter(r => r.status === 'fulfilled').length;
-    const errors = results
-      .filter(r => r.status === 'rejected')
-      .map((r: any) => r.reason.message);
+    const results = { success: 0, failed: 0, errors: [] as string[] };
+
+    // 2. 串行处理 loop
+    for (const id of orderIds) {
+      try {
+        await coreShipLogic(
+          id, 
+          merchant._id.toString(), // <--- 这里也要加 .toString()
+          merchantGeo
+        );
+        results.success++;
+        // 延时防封
+        await sleep(300); 
+      } catch (err: any) {
+        results.failed++;
+        results.errors.push(err.message);
+      }
+    }
 
     res.json({
       success: true,
-      message: `处理结束: 成功 ${successCount} / 总 ${orderIds.length}`,
-      details: { successCount, errors }
+      message: `批量处理完成: 成功 ${results.success} / 失败 ${results.failed}`,
+      details: results
     });
 
   } catch (error) {
-    console.error('Batch ship error:', error);
     res.status(500).json({ message: '批量发货系统异常' });
   }
 };

@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "hon-condos-telecommunications-accomplished.trycloudflare.com"
+      "former-valium-bacteria-theory.trycloudflare.com"
     ],
   },
 });

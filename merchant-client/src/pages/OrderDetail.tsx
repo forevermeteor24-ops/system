@@ -121,61 +121,80 @@ export default function MerchantOrderDetail() {
     return () => { mounted = false; };
   }, [id]);
 
-  /* ---------------- 2. WebSocket 追踪逻辑 ---------------- */
-  useEffect(() => {
-    if (!order || order.status !== "配送中" || !markerReady) return;
+// OrderDetail.tsx 中的 useEffect
 
-    if (wsRef.current) wsRef.current.close();
-    const ws = new WebSocket("wss://system-backend.zeabur.app");
-    wsRef.current = ws;
+/* ---------------- 2. WebSocket 追踪逻辑 (修复版) ---------------- */
+useEffect(() => {
+  // 只有在订单状态是“配送中”且地图marker已准备好时才连接
+  if (!order || order.status !== "配送中" || !markerReady) return;
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
-      // 商家进入详情页时，如果车没动，尝试激活它
-      if (order.status === "配送中") {
-        ws.send(JSON.stringify({ 
-          type: "start-track", 
-          orderId: order._id,
-          points: order.routePoints 
-        }));
+  if (wsRef.current) wsRef.current.close();
+  const ws = new WebSocket("wss://system-backend.zeabur.app"); // 替换你的真实地址
+  wsRef.current = ws;
+
+  ws.onopen = () => {
+    console.log("WS Connected");
+    // 1. 先订阅
+    ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
+    
+    // 2. 关键修改：不要直接发送 start-track！
+    // 而是发送 request-current 询问服务器：“这辆车现在在跑吗？”
+    ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+
+      // 情况 A：服务器说“内存里没这个车”（比如服务器昨晚重启了）
+      // 这时候前端才负责发送启动指令，带上路径点
+      if (msg.type === "no-track") {
+         console.log("服务器无运行记录，正在恢复运行...");
+         ws.send(JSON.stringify({ 
+           type: "start-track", 
+           orderId: order._id,
+           points: order.routePoints 
+         }));
       }
-    };
 
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        // 更新 ETA
+      // 情况 B：服务器说“车正在跑，这是当前状态”
+      // 我们只需要把 marker 瞬移到最新位置，不需要从头开始
+      if (msg.type === "current-state") {
+         console.log("同步服务器当前状态", msg);
+         if (msg.position && markerRef.current) {
+            const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
+            markerRef.current.setPosition(pos);
+            // 还可以根据 msg.index 恢复一些进度条 UI
+         }
+      }
+
+      // 情况 C：常规的位置更新
+      if (msg.type === "location" && markerRef.current) {
+        // 更新倒计时文字
         if (msg.remainingSeconds !== undefined) {
-          const hrs = Math.floor(msg.remainingSeconds / 3600);
-          const mins = Math.floor((msg.remainingSeconds % 3600) / 60);
-          const secs = Math.floor(msg.remainingSeconds % 60);
-          let label = "";
-          if (hrs > 0) label += `${hrs}小时 `;
-          if (mins > 0 || hrs > 0) label += `${mins}分 `;
-          label += `${secs}秒`;
-          setRealtimeLabel(label);
-       }
-       // 移动 Marker
-        if (msg.type === "location" && markerRef.current) {
-          if (msg.nextPosition && msg.duration > 0) {
-            const nextLngLat = new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat);
-            markerRef.current.moveTo(nextLngLat, {
-              duration: msg.duration,
-              autoRotation: true,
-            });
-          } else if (msg.position) {
-             const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
-             markerRef.current.setPosition(pos);
-          }
-          if (msg.finished) {
-            setOrder((prev: any) => ({ ...prev, status: "已送达" }));
-          }
+           // ... 你的格式化时间逻辑
+           setRemainingTime(formatRemainingETA(Date.now() + msg.remainingSeconds * 1000));
         }
-      } catch (e) { console.error(e); }
-    };
+        
+        // 移动 marker
+        if (msg.nextPosition && msg.duration > 0) {
+          const nextLngLat = new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat);
+          markerRef.current.moveTo(nextLngLat, {
+            duration: msg.duration,
+            autoRotation: true,
+          });
+        }
+        
+        // 结束逻辑
+        if (msg.finished) {
+          setOrder((prev: any) => ({ ...prev, status: "已送达" }));
+        }
+      }
+    } catch (e) { console.error(e); }
+  };
 
-    return () => { if (ws.readyState === 1) ws.close(); };
-  }, [order?._id, order?.status, markerReady]);
+  return () => { if (ws.readyState === 1) ws.close(); };
+}, [order?._id, order?.status, markerReady]);
 
   /* ---------------- 3. 辅助逻辑 ---------------- */
   useEffect(() => {

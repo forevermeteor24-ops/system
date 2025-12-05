@@ -10,7 +10,7 @@ export class TrackPlayer {
   private isPlaying = false;
   private stopped = false;
   
-  // 小车速度（米/秒）- 可调快一点测试效果，比如 20
+  // 小车速度（米/秒）- 可以根据需要调整
   private speed = 20; 
 
   constructor(orderId: string, wss: any) {
@@ -18,40 +18,81 @@ export class TrackPlayer {
     this.wss = wss;
   }
 
-  // ... restoreState 和 saveState 保持不变 ...
-  // ... startWithPoints 和 getCurrentState 保持不变 ...
-  
-  // 必须把 restoreState, saveState, startWithPoints, getCurrentState 等代码保留
-  // 这里只展示修改后的 nextTick 和 broadcast 逻辑
-
+  /**
+   * ✅ 修复 1: 恢复状态逻辑
+   * 从数据库读取进度，防止重启后从头开始
+   */
   private async restoreState() {
-     const order = await OrderModel.findById(this.orderId).select("trackState");
-     if (order?.trackState) {
-       this.index = Math.min(order.trackState.index, Math.max(0, (order.trackState.total || 1) - 1));
-     } else {
-       this.index = 0;
-     }
+    try {
+      const order = await OrderModel.findById(this.orderId).select("trackState");
+      
+      // 检查是否有保存的进度
+      if (order && order.trackState && typeof order.trackState.index === 'number') {
+        // 确保索引不越界 (不能小于0，也不能超过当前路径总长度)
+        const safeIndex = Math.min(order.trackState.index, (this.points.length || 1) - 1);
+        this.index = Math.max(0, safeIndex);
+        
+        if (this.index > 0) {
+          console.log(`[TrackPlayer] 订单 ${this.orderId} 恢复进度: 第 ${this.index}/${this.points.length} 点`);
+        }
+      } else {
+        this.index = 0;
+      }
+    } catch (error) {
+      console.error("恢复进度失败:", error);
+      this.index = 0;
+    }
   }
 
+  /**
+   * 保存当前进度到数据库
+   * 每走几步存一次，防止服务器崩溃数据丢失
+   */
   private async saveState() {
     const i = Math.max(0, Math.min(this.index, this.points.length - 1));
     await OrderModel.updateOne(
       { _id: this.orderId },
-      { $set: { "trackState": { index: i, total: this.points.length, lastPosition: this.points[i] || null } } }
+      { 
+        $set: { 
+          "trackState": { 
+            index: i, 
+            total: this.points.length, 
+            lastPosition: this.points[i] || null 
+          } 
+        } 
+      }
     );
   }
 
+  /**
+   * ✅ 修复 2: 启动逻辑
+   * 必须在 restoreState 之后，基于【剩余路径】计算 ETA
+   */
   public async startWithPoints(points: { lng: number; lat: number }[]) {
     if (!points?.length) return;
     this.points = points;
     this.stopped = false;
+
+    // 1. 先尝试恢复之前的进度
     await this.restoreState();
 
-    const etaSeconds = calcETASeconds(points, this.speed);
-    const etaTime = Date.now() + etaSeconds * 1000;
+    // 2. ⭐ 关键修复：只计算剩余路程的时间 ⭐
+    // 如果是从第 500 个点开始跑，ETA 应该只包含从 500 到终点的时间
+    const remainingPoints = this.points.slice(this.index);
+    const remainingSeconds = calcETASeconds(remainingPoints, this.speed);
+    
+    // 3. 更新预计到达时间 (当前时间 + 剩余时间)
+    const etaTime = Date.now() + remainingSeconds * 1000;
 
+    // 4. 更新数据库
+    // 注意：不要覆盖 trackState.index，因为我们刚恢复了它
     await OrderModel.updateOne({ _id: this.orderId }, {
-      $set: { eta: etaTime, status: "配送中", routePoints: points, "trackState.total": points.length }
+      $set: { 
+        eta: etaTime, 
+        status: "配送中", 
+        routePoints: points, 
+        "trackState.total": points.length 
+      }
     });
 
     this.isPlaying = true;
@@ -68,7 +109,6 @@ export class TrackPlayer {
     };
   }
 
-  /** 核心修改：逐步推进 */
   private async nextTick() {
     if (!this.isPlaying || this.stopped) return;
 
@@ -82,8 +122,9 @@ export class TrackPlayer {
         orderId: this.orderId,
         index: this.points.length - 1,
         position: final,
-        nextPosition: final, // 终点
-        duration: 0
+        nextPosition: final, 
+        duration: 0,
+        remainingSeconds: 0
       });
 
       await OrderModel.updateOne({ _id: this.orderId }, { $set: { status: "已送达", deliveredAt: Date.now() } });
@@ -96,43 +137,38 @@ export class TrackPlayer {
     const currentPoint = this.points[this.index];
     const nextPoint = this.points[this.index + 1];
 
-    // ============================================
-    // ⭐ 新增：计算剩下所有路程还需要多少秒 ⭐
-    // ============================================
-    // 截取从当前位置到终点的路径点
+    // 3. 实时计算剩余时间 (用于前端倒计时修正)
     const remainingRoute = this.points.slice(this.index);
-    // 重新计算剩余时间
     const remainingSeconds = calcETASeconds(remainingRoute, this.speed);
-    // ============================================
 
-    // 3. 计算距离和时间
+    // 4. 计算这一步的距离和动画时间
     let distance = calcTotalDistance([currentPoint, nextPoint]);
     if (!distance || distance < 0.1) distance = 1;
     
-    // 动画时长(ms) = (距离 / 速度) * 1000
     const duration = (distance / this.speed) * 1000;
 
-    // 4. 广播：告诉前端“我现在在 A，要在 T毫秒 内移动到 B”
+    // 5. 广播位置更新
     this.broadcast({
       type: "location",
       finished: false,
       orderId: this.orderId,
       index: this.index,
-      position: currentPoint, // 当前起点
-      nextPosition: nextPoint, // 目标点
-      duration: duration, // 前端动画时间需严格等于这个值
-      remainingSeconds: remainingSeconds // <--- 把实时剩余时间发给前端
+      position: currentPoint,
+      nextPosition: nextPoint,
+      duration: duration,
+      remainingSeconds: remainingSeconds // 发送给前端
     });
 
-    // 5. 推进索引并等待
+    // 6. 推进索引
     this.index++;
+    
+    // 每走 5 步存一次数据库，避免 I/O 过于频繁
     if (this.index % 5 === 0) await this.saveState();
 
-    // 等待时间与动画时间一致
+    // 递归调用下一步
     setTimeout(() => this.nextTick(), duration);
   }
   
-  // ... pause, resume, stop, broadcast 保持不变 ...
   public pause() { if (!this.isPlaying || this.stopped) return; this.isPlaying = false; }
   public resume() { if (this.stopped || this.isPlaying) return; this.isPlaying = true; this.nextTick(); }
   public stop() { this.isPlaying = false; this.stopped = true; }
@@ -141,6 +177,7 @@ export class TrackPlayer {
     if (!this.wss?.clients) return;
     const data = JSON.stringify(msg);
     for (const client of this.wss.clients as Set<any>) {
+      // 只有订阅了该订单 ID 的客户端才接收消息
       if (client.readyState === 1 && client.subscribedOrderId === this.orderId) {
         client.send(data);
       }

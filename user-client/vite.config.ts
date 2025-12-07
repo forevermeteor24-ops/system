@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "former-valium-bacteria-theory.trycloudflare.com"
+      "tract-very-columns-cafe.trycloudflare.com"
     ],
   },
 });

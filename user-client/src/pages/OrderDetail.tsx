@@ -14,8 +14,9 @@ export default function OrderDetail() {
   const [order, setOrder] = useState<any>(null);
   const [remainingTime, setRemainingTime] = useState<string>("--");
   const [realtimeLabel, setRealtimeLabel] = useState<string>("");
+  const [markerReady, setMarkerReady] = useState(false); 
   
-  // ⭐ 新增：搜索框状态
+  // 搜索框状态
   const [searchId, setSearchId] = useState("");
 
   // --- Refs ---
@@ -24,12 +25,10 @@ export default function OrderDetail() {
   const markerRef = useRef<any>(null);
   const polylineRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [markerReady, setMarkerReady] = useState(false); 
 
   /* ---------------- 0. 搜索处理函数 ---------------- */
   const handleSearch = () => {
     if (!searchId.trim()) return;
-    // 假设用户端的路由是 /orders/:id
     navigate(`/orders/${searchId.trim()}`);
     setSearchId(""); 
   };
@@ -61,11 +60,10 @@ export default function OrderDetail() {
             zoom: 13,
             center: [121.47, 31.23], 
             viewMode: "3D", 
-            mapStyle: "amap://styles/whitesmoke", // 稍微美化地图底色
+            mapStyle: "amap://styles/whitesmoke", 
           });
 
           mapInstanceRef.current.plugin(["AMap.MoveAnimation", "AMap.ToolBar", "AMap.Scale"], () => {
-             // 控件放在右下角
              mapInstanceRef.current.addControl(new AMap.ToolBar({ position: 'RB' }));
              mapInstanceRef.current.addControl(new AMap.Scale());
           });
@@ -92,12 +90,34 @@ export default function OrderDetail() {
           map.add(polyline);
           polylineRef.current = polyline;
           
-          // 自动缩放视野 (留出边距)
           map.setFitView([polyline], true, [60, 60, 60, 60]);
 
-          const startPos = o.trackState?.lastPosition 
-            ? new AMap.LngLat(o.trackState.lastPosition.lng, o.trackState.lastPosition.lat)
-            : path[0];
+          // ========================= 🟢 修复的核心逻辑 =========================
+          let startPos;
+
+          const isEtaPassed = o.eta && new Date(o.eta).getTime() < Date.now();
+          const hasTrackData = (o as any).trackState?.lastPosition;
+
+          // 1. 强制终点的情况：
+          //    A. 状态已经是“已送达/已完成”
+          //    B. 状态是“配送中”，但是时间已经过了 (isEtaPassed) -> 即使服务器有旧数据，也不管了，直接去终点！
+          if (
+            ["已送达", "已完成"].includes(o.status) || 
+            (o.status === "配送中" && isEtaPassed) 
+          ) {
+             startPos = path[path.length - 1]; 
+             setRemainingTime("已送达");
+          } 
+          // 2. 如果还在配送时间内，且有服务器记录的位置 -> 使用服务器位置
+          else if (hasTrackData) {
+             // 🔴 这里修复了之前的 TS 报错，直接使用 hasTrackData 对象
+             startPos = new AMap.LngLat(hasTrackData.lng, hasTrackData.lat);
+          } 
+          // 3. 刚开始发货 -> 起点
+          else {
+             startPos = path[0];
+          }
+          // ====================================================================
 
           const carIcon = new AMap.Icon({
             size: new AMap.Size(52, 26),
@@ -129,43 +149,47 @@ export default function OrderDetail() {
 
   /* ---------------- 2. WebSocket 实时追踪 ---------------- */
   useEffect(() => {
-    if (!order || order.status !== "配送中" || !markerReady) return;
+    // 拦截：如果是已结束状态，绝对不连 WS，防止重置位置
+    if (!order || ["已送达", "已完成", "商家已取消"].includes(order.status)) return;
+    if ((order.status !== "配送中" && order.status !== "待发货") || !markerReady) return;
+  
     if (wsRef.current) wsRef.current.close();
 
-    const ws = new WebSocket("wss://system-backend.zeabur.app");
+    const ws = new WebSocket("wss://system-backend.zeabur.app"); // 替换真实地址
     wsRef.current = ws;
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: "subscribe", orderId: order._id }));
+      ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
     };
     
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.remainingSeconds !== undefined) {
-          const hrs = Math.floor(msg.remainingSeconds / 3600);
-          const mins = Math.floor((msg.remainingSeconds % 3600) / 60);
-          const secs = Math.floor(msg.remainingSeconds % 60);
-          let label = "";
-          if (hrs > 0) label += `${hrs}小时 `;
-          if (mins > 0 || hrs > 0) label += `${mins}分 `;
-          label += `${secs}秒`;
-          setRealtimeLabel(label);
-       }
+
+        // 同步当前位置
+        if (msg.type === "current-state" && msg.position && markerRef.current) {
+           const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
+           markerRef.current.setPosition(pos);
+        }
         
+        // 实时位置更新
         if (msg.type === "location" && markerRef.current) {
+          if (msg.remainingSeconds !== undefined) {
+             setRemainingTime(formatRemainingETA(Date.now() + msg.remainingSeconds * 1000));
+          }
+          
           if (msg.nextPosition && msg.duration > 0) {
             const nextLngLat = new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat);
             markerRef.current.moveTo(nextLngLat, {
               duration: msg.duration, 
               autoRotation: true,
             });
-          } else if (msg.position) {
-             const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
-             markerRef.current.setPosition(pos);
           }
+          
           if (msg.finished) {
             setOrder((prev: any) => ({ ...prev, status: "已送达" }));
+            setRemainingTime("已送达");
           }
         }
       } catch (e) { console.error(e); }
@@ -177,7 +201,7 @@ export default function OrderDetail() {
   /* ---------------- 3. 辅助功能 ---------------- */
   useEffect(() => {
     if (!order?.eta || ["已送达", "已完成", "商家已取消"].includes(order?.status)) {
-      setRemainingTime("配送结束");
+      setRemainingTime("已送达"); 
       return;
     }
     const timer = setInterval(() => {
@@ -190,8 +214,10 @@ export default function OrderDetail() {
     if (!order) return;
     try {
       if (action === 'confirm') {
+        if(!confirm("确认收到商品？")) return;
         await updateStatus(order._id, "已完成");
         setOrder({ ...order, status: "已完成" });
+        window.location.reload();
       } else if (action === 'return') {
         if(!confirm("确认申请退货？")) return;
         await updateStatus(order._id, "用户申请退货");
@@ -205,16 +231,16 @@ export default function OrderDetail() {
   };
 
   /* ---------------- 4. 渲染视图 ---------------- */
-  
-  // 提取商家信息 (兼容 populate 后的对象)
   const merchantInfo = order && typeof order.merchantId === 'object' ? order.merchantId : null;
   const shopName = merchantInfo?.username || "未知商家";
   const shopPhone = merchantInfo?.phone || "暂无电话";
+  
+  const isEtaPassed = order?.eta && new Date(order.eta).getTime() < Date.now();
 
   return (
     <div style={styles.container}>
       
-      {/* 🟢 Header：包含搜索栏 */}
+      {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
             <Link to="/orders" style={styles.backLink}>
@@ -233,14 +259,12 @@ export default function OrderDetail() {
                 style={styles.searchInput}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
-            <button onClick={handleSearch} style={styles.searchBtn}>
-               🔍 搜索
-            </button>
+            <button onClick={handleSearch} style={styles.searchBtn}>🔍 搜索</button>
         </div>
       </div>
 
       <div style={styles.content}>
-        {/* 左侧：信息面板 */}
+        {/* 左侧信息 */}
         <div style={styles.leftPanel}>
           <div style={styles.card}>
              <div style={styles.statusHeader}>
@@ -258,46 +282,49 @@ export default function OrderDetail() {
 
              <div style={styles.divider} />
 
-             {/* 订单信息 */}
              <div style={styles.infoGroup}>
                 <InfoItem label="商品名称" value={order?.title} />
                 <InfoItem label="订单金额" value={`¥${order?.totalPrice || order?.price}`} highlight />
                 <InfoItem label="配送地址" value={order?.address?.detail} />
              </div>
              
-             {/* 按钮组 */}
+             {/* 操作按钮组 */}
              <div style={styles.actionGroup}>
                {order?.status === "已送达" && (
                  <button style={styles.btnPrimary} onClick={() => doAction('confirm')}>确认收货</button>
                )}
+               
+               {/* 🟢 只要超时，就允许确认收货 */}
+               {order?.status === "配送中" && isEtaPassed && (
+                 <button style={styles.btnSuccess} onClick={() => doAction('confirm')}>
+                   ✅ 确认收货 (已送达)
+                 </button>
+               )}
+
                {(order?.status === "待发货" || order?.status === "配送中") && (
                  <button style={styles.btnDangerGhost} onClick={() => doAction('return')}>申请退货</button>
                )}
+               
                {(order?.status === "已完成" || order?.status === "商家已取消") && (
                  <button style={styles.btnGhost} onClick={() => doAction('delete')}>删除订单</button>
                )}
              </div>
           </div>
 
-          {/* 物流时间轴 */}
           <div style={{...styles.card, flex: 1}}>
             <h3 style={{margin: '0 0 20px 0', fontSize: '16px'}}>物流进度</h3>
             <Timeline status={order?.status} deliveredTime={order?.deliveredAt} />
           </div>
         </div>
 
-        {/* 右侧：地图 */}
+        {/* 右侧地图 */}
         <div style={styles.mapPanel}>
           <div ref={mapRef} style={{width: '100%', height: '100%'}} />
           
-          {/* ⭐ 悬浮卡片：商家信息 */}
           {order && (
             <div style={styles.merchantCard}>
                 <div style={styles.merchantHeader}>
-                    {/* 橙色头像代表商家 */}
-                    <div style={styles.avatarPlaceholder}>
-                       商
-                    </div>
+                    <div style={styles.avatarPlaceholder}>商</div>
                     <div>
                         <div style={styles.merchantName}>{shopName}</div>
                         <div style={styles.merchantLabel}>配送商家</div>
@@ -307,23 +334,13 @@ export default function OrderDetail() {
                 <div style={styles.phoneRow}>
                     <span style={{fontSize: '16px'}}>📞</span> 
                     <span style={styles.phoneText}>{shopPhone}</span>
-                    <button 
-                        style={styles.btnMiniCopy} 
-                        onClick={() => {
-                           if(shopPhone && shopPhone !== "暂无电话") {
-                               navigator.clipboard.writeText(shopPhone); 
-                               alert("商家电话已复制"); 
-                           }
-                        }}
-                    >
-                        复制
-                    </button>
+                    <button style={styles.btnMiniCopy} onClick={() => { if(shopPhone) navigator.clipboard.writeText(shopPhone) }}>复制</button>
                 </div>
             </div>
           )}
 
           {/* 实时监控标签 */}
-          {order?.status === "配送中" && (
+          {order?.status === "配送中" && !isEtaPassed && (
             <div style={styles.mapOverlay}>
               <span style={styles.pulsingDot}></span> 实时配送中
             </div>
@@ -355,7 +372,6 @@ const Timeline = ({ status, deliveredTime }: { status: string, deliveredTime?: s
     { key: "已送达", label: "送达目的地", time: deliveredTime ? new Date(deliveredTime).toLocaleTimeString() : "" },
     { key: "已完成", label: "订单完成", time: "" },
   ];
-  
   const statusIdx = steps.findIndex(s => s.key === status);
   const activeIdx = statusIdx === -1 ? (status === "商家已取消" ? -1 : 0) : statusIdx;
 
@@ -391,38 +407,30 @@ const Timeline = ({ status, deliveredTime }: { status: string, deliveredTime?: s
 // --- 样式表 ---
 const styles: Record<string, any> = {
   container: { maxWidth: '1400px', margin: '0 auto', padding: '24px', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", background: '#f7f8fa', minHeight: '100vh', boxSizing: 'border-box' },
-  
   header: { marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '16px 24px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
   headerLeft: { display: 'flex', alignItems: 'center', fontSize: '15px' },
   backLink: { textDecoration: 'none', color: '#666', fontWeight: 500, display: 'flex', alignItems: 'center' },
   breadcrumbSeparator: { margin: '0 10px', color: '#ddd' },
   breadcrumbCurrent: { color: '#1890ff', fontWeight: 600 },
-  
-  // 搜索栏
   searchContainer: { display: 'flex', gap: '0', boxShadow: '0 2px 6px rgba(0,0,0,0.05)', borderRadius: '6px' },
   searchInput: { padding: '8px 16px', border: '1px solid #d9d9d9', borderRight: 'none', borderRadius: '6px 0 0 6px', outline: 'none', width: '240px', fontSize: '14px' },
   searchBtn: { padding: '8px 20px', border: 'none', background: '#1890ff', color: 'white', borderRadius: '0 6px 6px 0', cursor: 'pointer', fontWeight: 500 },
-
   content: { display: 'flex', gap: '24px', height: 'calc(100vh - 140px)' },
   leftPanel: { flex: '0 0 360px', display: 'flex', flexDirection: 'column', gap: '24px' },
   mapPanel: { flex: '1', background: '#fff', borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', position: 'relative', overflow: 'hidden' },
   card: { background: '#fff', borderRadius: '16px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' },
-  
   statusHeader: { textAlign: 'center', paddingBottom: '20px' },
   etaBadge: { display: 'inline-block', background: '#e6f7ff', color: '#1890ff', padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '600', marginTop: '8px' },
   divider: { height: '1px', background: '#f0f0f0', margin: '0 0 20px 0' },
-  
   infoGroup: { display: 'flex', flexDirection: 'column', gap: '16px' },
   infoRow: { display: 'flex', justifyContent: 'space-between', fontSize: '14px', alignItems: 'center' },
   label: { color: '#888' },
   value: { color: '#333', fontWeight: 500, textAlign: 'right', maxWidth: '65%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-
   actionGroup: { marginTop: '30px', display: 'flex', gap: '12px' },
   btnPrimary: { background: "#1890ff", color: "white", border: "none", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1, fontWeight: 600 },
+  btnSuccess: { background: "#52c41a", color: "white", border: "none", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1, fontWeight: 600, boxShadow: '0 4px 10px rgba(82, 196, 26, 0.2)' },
   btnDangerGhost: { background: "white", color: "#ff4d4f", border: "1px solid #ff4d4f", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1, fontWeight: 600 },
   btnGhost: { background: "white", color: "#666", border: "1px solid #ddd", padding: "10px", borderRadius: "8px", cursor: "pointer", flex: 1 },
-
-  // ⭐ 商家悬浮卡片
   merchantCard: {
     position: 'absolute', top: '24px', left: '24px', zIndex: 150,
     background: 'rgba(255, 255, 255, 0.98)', backdropFilter: 'blur(10px)',
@@ -432,7 +440,7 @@ const styles: Record<string, any> = {
   },
   merchantHeader: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' },
   avatarPlaceholder: { 
-    width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+    width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff7e6', color: '#fa8c16',
     fontSize: '18px', fontWeight: 'bold', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' 
   },
   merchantName: { fontWeight: '700', fontSize: '16px', color: '#333' },
@@ -445,8 +453,6 @@ const styles: Record<string, any> = {
     background: '#f0f2f5', color: '#666', border: 'none', 
     borderRadius: '4px', cursor: 'pointer' 
   },
-
-  // Map Overlay
   mapOverlay: { 
     position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
     background: 'rgba(0,0,0,0.7)', color: 'white', padding: '8px 16px', borderRadius: '30px', 

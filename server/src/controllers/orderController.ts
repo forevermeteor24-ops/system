@@ -123,32 +123,46 @@ export async function getOrders(req: Request, res: Response) {
     if (actor.role === "merchant") filter.merchantId = actor.userId;
     else if (actor.role === "user") filter.userId = actor.userId;
 
-    /** -----------------------
-     *  ⭐ 新增：状态筛选功能
-     *  配合前端 fetchPendingOrders 中的 ?status=待发货
-     ------------------------ */
+    // 状态筛选功能
     const statusParam = req.query.status as string;
     if (statusParam) {
       filter.status = statusParam;
     }
 
-    /** -----------------------
-     *  ⭐ 原有：排序功能
-     *  sort = created_desc | created_asc | price_desc | price_asc
-     ------------------------ */
+    // 排序功能
     const sortParam = req.query.sort as string;
-
     const sortMap: any = {
       created_desc: { createdAt: -1 },
       created_asc: { createdAt: 1 },
       price_desc: { price: -1 },
       price_asc: { price: 1 },
     };
-
-    const sortRule = sortMap[sortParam] || { createdAt: -1 }; // 默认按创建时间倒序
+    const sortRule = sortMap[sortParam] || { createdAt: -1 }; 
 
     // 执行查询
     const list = await OrderModel.find(filter).sort(sortRule);
+
+    /** -----------------------
+     *  ⭐ 新增：列表页被动结算 (自动修复僵尸订单)
+     *  遍历查出来的列表，如果发现有超时未完成的，自动修正
+     ------------------------ */
+    const now = new Date();
+    const updates: Promise<any>[] = [];
+
+    for (const order of list) {
+      // 判断条件：状态是配送中 + 有ETA + 当前时间已超过ETA
+      if (order.status === '配送中' && order.eta && now > new Date(order.eta)) {
+        order.status = '已送达'; // 修改内存中的状态，保证返回给前端的是最新的
+        updates.push(order.save()); // 将数据库写入操作放入队列
+      }
+    }
+
+    // 如果有需要更新的订单，并行写入数据库
+    if (updates.length > 0) {
+      // 使用 Promise.allSettled 防止某一个保存失败影响整个列表返回
+      // 也可以用 await Promise.all(updates);
+      await Promise.allSettled(updates); 
+    }
 
     return res.json(list);
   } catch (err: any) {
@@ -167,26 +181,21 @@ export async function getOrder(req: Request, res: Response) {
     const id = req.params.id;
     if (!id) return res.status(400).json({ error: "缺少订单 id" });
 
-    // 2. 构建查询构建器 (Query Builder)
-    // 我们先不加 await，因为后面要追加 populate
+    // 2. 构建查询构建器
     let query;
 
-    // 🔴 保持你原有的权限逻辑不变：
-    // 如果是商家，必须同时匹配 订单ID 和 商家ID
+    // 保持你原有的权限逻辑不变
     if (actor.role === "merchant") {
       query = OrderModel.findOne({ _id: id, merchantId: actor.userId });
     } 
-    // 如果是用户，必须同时匹配 订单ID 和 用户ID
     else if (actor.role === "user") {
       query = OrderModel.findOne({ _id: id, userId: actor.userId });
     } 
-    // 管理员或其他
     else {
       query = OrderModel.findById(id);
     }
 
-    // 3. ⭐ 核心修改：追加 populate
-    // 这会将 userId 字段从 "字符串ID" 填充为 "包含 username 和 phone 的对象"
+    // 3. 追加 populate
     query.populate("userId", "username phone");
     query.populate("merchantId", "username phone"); 
 
@@ -195,6 +204,21 @@ export async function getOrder(req: Request, res: Response) {
 
     if (!order) {
       return res.status(404).json({ error: "Order not found 或无权限" });
+    }
+
+    /** -----------------------
+     *  ⭐ 新增：详情页被动结算
+     *  如果查出来的这个订单是“配送中”但已超时，立刻修正并保存
+     ------------------------ */
+    const isOverdue = order.status === '配送中' && 
+                      order.eta && 
+                      new Date() > new Date(order.eta);
+
+    if (isOverdue) {
+      console.log(`[系统自动修复] 订单 ${id} 已超时，自动变更为已送达`);
+      order.status = '已送达';
+      // 可选：如果想清理历史轨迹数据节省空间，可加 order.trackState = undefined;
+      await order.save();
     }
 
     return res.json(order);

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-// 引入你现有的 API
 import { fetchOrder, updateStatus, shipOrder, deleteOrder } from "../api/orders"; 
 import { formatRemainingETA } from "../utils/formatETA";
 
@@ -47,6 +46,7 @@ export default function MerchantOrderDetail() {
 
     (async () => {
       try {
+        // ⭐ 后端现在会自动修复超时订单，所以这里拿到的 o.status 已经是准确的了
         const o = await fetchOrder(id);
         if (!mounted) return;
         setOrder(o);
@@ -88,31 +88,25 @@ export default function MerchantOrderDetail() {
           polylineRef.current = polyline;
           map.setFitView([polyline], true, [60, 60, 60, 60]); 
 
-          // ========================= 🟢 核心修复：位置计算逻辑 =========================
+          // ========================= 🟢 逻辑已简化 =========================
+          // 因为后端已经保证了状态准确性，前端不需要再猜是否超时了
           let startPos;
-          
-          // 判断是否超时（ETA 已过）
-          const isEtaPassed = o.eta && new Date(o.eta).getTime() < Date.now();
           const hasTrackData = (o as any).trackState?.lastPosition;
 
           // 1. 如果状态是已送达/已完成 -> 强制在终点
-          // 2. 如果状态是配送中，但没数据且超时了 (僵尸订单) -> 强制在终点
-          if (
-            ["已送达", "已完成"].includes(o.status) || 
-            (o.status === "配送中" && !hasTrackData && isEtaPassed)
-          ) {
+          if (["已送达", "已完成"].includes(o.status)) {
              startPos = path[path.length - 1]; 
              setRemainingTime("已送达");
           } 
-          // 3. 如果有服务器记录的实时位置 -> 用服务器位置
+          // 2. 如果是配送中，且有位置数据 -> 恢复位置
           else if (hasTrackData) {
             startPos = new AMap.LngLat(hasTrackData.lng, hasTrackData.lat);
           } 
-          // 4. 刚发货 -> 起点
+          // 3. 刚发货或无数据 -> 起点
           else {
              startPos = path[0];
           }
-          // ===========================================================================
+          // =================================================================
           
           const carIcon = new AMap.Icon({
             size: new AMap.Size(52, 26),
@@ -141,33 +135,18 @@ export default function MerchantOrderDetail() {
     return () => { mounted = false; };
   }, [id]);
 
-  /* ---------------- 2. 🟢 新增：自动纠错机制 ---------------- */
-  useEffect(() => {
-    if (!order) return;
-    
-    const isDelivering = order.status === "配送中";
-    const etaTime = order.eta ? new Date(order.eta).getTime() : 0;
-    const now = Date.now();
-    // 如果超时超过 5 分钟，且状态仍为配送中，自动修复
-    const isLongOverdue = etaTime > 0 && (now - etaTime > 5 * 60 * 1000);
+  /* ---------------- 2. (已删除) 自动纠错 useEffect ---------------- */
+  // 之前的那个自动调用 updateStatus 的 useEffect 已经被删除
+  // 因为后端的 getOrder 接口已经处理了这件事
 
-    if (isDelivering && isLongOverdue) {
-       console.log("检测到僵尸订单，正在自动修复状态...");
-       updateStatus(order._id, "已送达").then(() => {
-         setOrder((prev: any) => ({...prev, status: "已送达"}));
-         setRemainingTime("已送达");
-       });
-    }
-  }, [order]);
-
-  /* ---------------- 3. WebSocket 追踪逻辑 (已加固) ---------------- */
+  /* ---------------- 3. WebSocket 追踪逻辑 ---------------- */
   useEffect(() => {
-    // 拦截：如果是已结束状态，绝对不连 WS，防止重置位置
+    // 拦截：如果是已结束状态，绝对不连 WS
     if (!order || ["已送达", "已完成", "商家已取消"].includes(order.status)) return;
     if (order.status !== "配送中" || !markerReady) return;
 
     if (wsRef.current) wsRef.current.close();
-    const ws = new WebSocket("wss://system-backend.zeabur.app"); // 替换你的真实地址
+    const ws = new WebSocket("wss://system-backend.zeabur.app"); // 替换真实地址
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -175,55 +154,74 @@ export default function MerchantOrderDetail() {
       ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
     };
 
-    ws.onmessage = async (ev) => {
+    ws.onmessage = async (ev) => { // 👈 注意：这里加了 async
       try {
         const msg = JSON.parse(ev.data);
 
-        // A. 服务器无记录
+        // ======================= 🟢 核心修复：防止僵尸订单复活 =======================
+        // 当服务器重启后，会告诉前端 "no-track" (我内存里没这个车)
         if (msg.type === "no-track") {
-           // 如果已经超时，不要重启模拟，防止跳回起点
-           const isEtaPassed = order.eta && new Date(order.eta).getTime() < Date.now();
-           if (isEtaPassed) return;
+           const originalEta = order.eta ? new Date(order.eta).getTime() : 0;
+           const now = Date.now();
 
+           // 判断：如果当前时间已经超过了原本的 ETA
+           // 说明这单肯定早就跑完了，绝对不能发送 start-track，否则 ETA 会被重置到未来！
+           if (originalEta && now > originalEta) {
+               console.warn("检测到订单超时 (服务器重启导致)，正在强制结算...");
+
+               // 1. 调用 API 告诉数据库：这单完了
+               await updateStatus(order._id, "已送达");
+
+               // 2. 更新前端界面，让车去终点，按钮变绿
+               setOrder((prev: any) => ({ ...prev, status: "已送达" }));
+               setRemainingTime("已送达");
+
+               // 3. 断开连接，不再接收消息
+               ws.close();
+               return; 
+           }
+
+           // 只有真的还没超时（比如刚发货服务器就重启了），才允许恢复运行
+           console.log("服务器无记录且未超时，正在恢复运行...");
            ws.send(JSON.stringify({ 
              type: "start-track", 
              orderId: order._id,
              points: order.routePoints 
            }));
         }
+        // ===========================================================================
 
-        // B. 同步当前位置
+        // 同步当前位置
         if (msg.type === "current-state" && msg.position && markerRef.current) {
            const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
            markerRef.current.setPosition(pos);
         }
-
-        // C. 实时移动
+        
+        // 实时位置更新
         if (msg.type === "location" && markerRef.current) {
           if (msg.remainingSeconds !== undefined) {
              setRemainingTime(formatRemainingETA(Date.now() + msg.remainingSeconds * 1000));
           }
           
           if (msg.nextPosition && msg.duration > 0) {
-            markerRef.current.moveTo(new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat), {
-              duration: msg.duration,
+            const nextLngLat = new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat);
+            markerRef.current.moveTo(nextLngLat, {
+              duration: msg.duration, 
               autoRotation: true,
             });
           }
           
-          // 🟢 关键修复：收到结束信号，必须调用 API 更新数据库
+          // 正常跑完结束
           if (msg.finished) {
-            console.log("WS 结束，更新数据库状态...");
-            setOrder((prev: any) => ({ ...prev, status: "已送达" }));
-            setRemainingTime("已送达");
-            // 真正写入数据库
-            await updateStatus(order._id, "已送达");
-            ws.close();
+             // 这里也要记得调用一下后端 API 兜底（虽然自动结算有了，多调一次无害）
+             await updateStatus(order._id, "已送达");
+             setOrder((prev: any) => ({ ...prev, status: "已送达" }));
+             setRemainingTime("已送达");
+             ws.close();
           }
         }
       } catch (e) { console.error(e); }
     };
-
     return () => { if (ws.readyState === 1) ws.close(); };
   }, [order?._id, order?.status, markerReady]);
 
@@ -246,7 +244,6 @@ export default function MerchantOrderDetail() {
       if (action === 'ship') {
         if(!confirm("确认立即发货？(这将启动小车模拟)")) return;
         await shipOrder(order._id);
-        // 刷新页面以触发新的生命周期
         window.location.reload();
       } 
       else if (action === 'cancel') {
@@ -264,9 +261,9 @@ export default function MerchantOrderDetail() {
         await deleteOrder(order._id);
         navigate("/merchant");
       }
-      // 🟢 强制完成逻辑
+      // 🟢 强制完成逻辑 (保留作为双重保险)
       else if (action === 'force_complete') {
-        if(!confirm("检测到订单可能卡顿，确认强制标记为已送达？")) return;
+        if(!confirm("确认强制标记为已送达？")) return;
         await updateStatus(order._id, "已送达");
         window.location.reload();
       }
@@ -332,7 +329,7 @@ export default function MerchantOrderDetail() {
                 <InfoItem label="配送地址" value={order?.address?.detail} />
              </div>
              
-             {/* 🟢 操作按钮区 (包含强制完成) */}
+             {/* 🟢 操作按钮区 */}
              <div style={styles.actionGroup}>
                {order?.status === "待发货" && (
                     <button style={styles.btnPrimary} onClick={() => doMerchantAction('ship')}>🚀 立即发货</button>
@@ -344,7 +341,7 @@ export default function MerchantOrderDetail() {
                  <button style={styles.btnGhost} onClick={() => doMerchantAction('delete')}>删除记录</button>
                )}
                
-               {/* 配送中按钮逻辑 */}
+               {/* 配送中按钮逻辑：保留 Force 按钮，万一用户长时间不刷新页面需要手动点 */}
                {order?.status === "配送中" && (
                  <>
                    {isEtaPassed ? (
@@ -387,6 +384,7 @@ export default function MerchantOrderDetail() {
             </div>
           )}
 
+          {/* 实时监控标签 */}
           {order?.status === "配送中" && !isEtaPassed && (
             <div style={styles.mapOverlay}>
                <span style={styles.pulsingDot}></span>

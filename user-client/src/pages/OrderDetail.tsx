@@ -47,6 +47,7 @@ export default function OrderDetail() {
 
     (async () => {
       try {
+        // ⭐ 后端已包含自动结算逻辑，返回的 status 是准确的
         const o = await fetchOrder(id);
         if (!mounted) return;
         setOrder(o);
@@ -92,32 +93,25 @@ export default function OrderDetail() {
           
           map.setFitView([polyline], true, [60, 60, 60, 60]);
 
-          // ========================= 🟢 修复的核心逻辑 =========================
+          // ========================= 🟢 逻辑简化 =========================
+          // 不再需要前端猜测是否超时，直接信赖后端状态
           let startPos;
-
-          const isEtaPassed = o.eta && new Date(o.eta).getTime() < Date.now();
           const hasTrackData = (o as any).trackState?.lastPosition;
 
-          // 1. 强制终点的情况：
-          //    A. 状态已经是“已送达/已完成”
-          //    B. 状态是“配送中”，但是时间已经过了 (isEtaPassed) -> 即使服务器有旧数据，也不管了，直接去终点！
-          if (
-            ["已送达", "已完成"].includes(o.status) || 
-            (o.status === "配送中" && isEtaPassed) 
-          ) {
+          // 1. 状态是“已送达/已完成” -> 终点
+          if (["已送达", "已完成"].includes(o.status)) {
              startPos = path[path.length - 1]; 
              setRemainingTime("已送达");
           } 
-          // 2. 如果还在配送时间内，且有服务器记录的位置 -> 使用服务器位置
+          // 2. 状态是“配送中”且有位置数据 -> 恢复位置
           else if (hasTrackData) {
-             // 🔴 这里修复了之前的 TS 报错，直接使用 hasTrackData 对象
              startPos = new AMap.LngLat(hasTrackData.lng, hasTrackData.lat);
           } 
-          // 3. 刚开始发货 -> 起点
+          // 3. 其他情况 -> 起点
           else {
              startPos = path[0];
           }
-          // ====================================================================
+          // ===============================================================
 
           const carIcon = new AMap.Icon({
             size: new AMap.Size(52, 26),
@@ -149,7 +143,7 @@ export default function OrderDetail() {
 
   /* ---------------- 2. WebSocket 实时追踪 ---------------- */
   useEffect(() => {
-    // 拦截：如果是已结束状态，绝对不连 WS，防止重置位置
+    // 拦截：如果是已结束状态，绝对不连 WS
     if (!order || ["已送达", "已完成", "商家已取消"].includes(order.status)) return;
     if ((order.status !== "配送中" && order.status !== "待发货") || !markerReady) return;
   
@@ -163,9 +157,42 @@ export default function OrderDetail() {
       ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
     };
     
-    ws.onmessage = (ev) => {
+    ws.onmessage = async (ev) => { // 👈 注意：这里加了 async
       try {
         const msg = JSON.parse(ev.data);
+
+        // ======================= 🟢 核心修复：防止僵尸订单复活 =======================
+        // 当服务器重启后，会告诉前端 "no-track" (我内存里没这个车)
+        if (msg.type === "no-track") {
+           const originalEta = order.eta ? new Date(order.eta).getTime() : 0;
+           const now = Date.now();
+
+           // 判断：如果当前时间已经超过了原本的 ETA
+           // 说明这单肯定早就跑完了，绝对不能发送 start-track，否则 ETA 会被重置到未来！
+           if (originalEta && now > originalEta) {
+               console.warn("检测到订单超时 (服务器重启导致)，正在强制结算...");
+
+               // 1. 调用 API 告诉数据库：这单完了
+               await updateStatus(order._id, "已送达");
+
+               // 2. 更新前端界面，让车去终点，按钮变绿
+               setOrder((prev: any) => ({ ...prev, status: "已送达" }));
+               setRemainingTime("已送达");
+
+               // 3. 断开连接，不再接收消息
+               ws.close();
+               return; 
+           }
+
+           // 只有真的还没超时（比如刚发货服务器就重启了），才允许恢复运行
+           console.log("服务器无记录且未超时，正在恢复运行...");
+           ws.send(JSON.stringify({ 
+             type: "start-track", 
+             orderId: order._id,
+             points: order.routePoints 
+           }));
+        }
+        // ===========================================================================
 
         // 同步当前位置
         if (msg.type === "current-state" && msg.position && markerRef.current) {
@@ -187,9 +214,13 @@ export default function OrderDetail() {
             });
           }
           
+          // 正常跑完结束
           if (msg.finished) {
-            setOrder((prev: any) => ({ ...prev, status: "已送达" }));
-            setRemainingTime("已送达");
+             // 这里也要记得调用一下后端 API 兜底（虽然自动结算有了，多调一次无害）
+             await updateStatus(order._id, "已送达");
+             setOrder((prev: any) => ({ ...prev, status: "已送达" }));
+             setRemainingTime("已送达");
+             ws.close();
           }
         }
       } catch (e) { console.error(e); }
@@ -235,6 +266,7 @@ export default function OrderDetail() {
   const shopName = merchantInfo?.username || "未知商家";
   const shopPhone = merchantInfo?.phone || "暂无电话";
   
+  // 用于 UI 显示 (例如显示地图上的监控标签)
   const isEtaPassed = order?.eta && new Date(order.eta).getTime() < Date.now();
 
   return (
@@ -290,17 +322,15 @@ export default function OrderDetail() {
              
              {/* 操作按钮组 */}
              <div style={styles.actionGroup}>
+               {/* 
+                  🟢 简化后的逻辑：
+                  因为后端会自动把超时的订单改为“已送达”，
+                  所以这里不需要再判断 isEtaPassed，只看 status 即可。
+               */}
                {order?.status === "已送达" && (
                  <button style={styles.btnPrimary} onClick={() => doAction('confirm')}>确认收货</button>
                )}
                
-               {/* 🟢 只要超时，就允许确认收货 */}
-               {order?.status === "配送中" && isEtaPassed && (
-                 <button style={styles.btnSuccess} onClick={() => doAction('confirm')}>
-                   ✅ 确认收货 (已送达)
-                 </button>
-               )}
-
                {(order?.status === "待发货" || order?.status === "配送中") && (
                  <button style={styles.btnDangerGhost} onClick={() => doAction('return')}>申请退货</button>
                )}

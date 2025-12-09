@@ -183,23 +183,6 @@ export async function getOrders(req: Request, res: Response) {
     // 执行查询
     const list = await OrderModel.find(filter).sort(sortRule);
 
-    /** -----------------------
-     *  列表页被动结算 (自动修复僵尸订单)
-     ------------------------ */
-    const now = new Date();
-    const updates: Promise<any>[] = [];
-
-    for (const order of list) {
-      if (order.status === '配送中' && order.eta && now > new Date(order.eta)) {
-        order.status = '已送达';
-        updates.push(order.save());
-      }
-    }
-
-    if (updates.length > 0) {
-      await Promise.allSettled(updates); 
-    }
-
     return res.json(list);
   } catch (err: any) {
     console.error("getOrders error:", err);
@@ -240,21 +223,6 @@ export async function getOrder(req: Request, res: Response) {
 
     if (!order) {
       return res.status(404).json({ error: "Order not found 或无权限" });
-    }
-
-    /** -----------------------
-     *  ⭐ 新增：详情页被动结算
-     *  如果查出来的这个订单是“配送中”但已超时，立刻修正并保存
-     ------------------------ */
-    const isOverdue = order.status === '配送中' && 
-                      order.eta && 
-                      new Date() > new Date(order.eta);
-
-    if (isOverdue) {
-      console.log(`[系统自动修复] 订单 ${id} 已超时，自动变更为已送达`);
-      order.status = '已送达';
-      // 可选：如果想清理历史轨迹数据节省空间，可加 order.trackState = undefined;
-      await order.save();
     }
 
     return res.json(order);

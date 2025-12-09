@@ -1,4 +1,3 @@
-// server/src/simulator/trackPlayer.ts
 import OrderModel from "../models/orderModel";
 import { calcTotalDistance, calcETASeconds } from "../utils/calcETA";
 
@@ -10,8 +9,9 @@ export class TrackPlayer {
   private isPlaying = false;
   private stopped = false;
   
-  // 小车速度（米/秒）- 可以根据需要调整
-  private speed = 20; 
+  // 🟢 修改 1: 模拟器实际运行速度 (28 m/s ≈ 100 km/h)
+  // 这决定了前端倒计时的快慢，以及小车移动的速度
+  private speed = 28; 
 
   constructor(orderId: string, wss: any) {
     this.orderId = orderId;
@@ -19,7 +19,7 @@ export class TrackPlayer {
   }
 
   /**
-   * ✅ 修复 1: 恢复状态逻辑
+   * 恢复状态逻辑
    * 从数据库读取进度，防止重启后从头开始
    */
   private async restoreState() {
@@ -28,7 +28,7 @@ export class TrackPlayer {
       
       // 检查是否有保存的进度
       if (order && order.trackState && typeof order.trackState.index === 'number') {
-        // 确保索引不越界 (不能小于0，也不能超过当前路径总长度)
+        // 确保索引不越界
         const safeIndex = Math.min(order.trackState.index, (this.points.length || 1) - 1);
         this.index = Math.max(0, safeIndex);
         
@@ -46,7 +46,6 @@ export class TrackPlayer {
 
   /**
    * 保存当前进度到数据库
-   * 每走几步存一次，防止服务器崩溃数据丢失
    */
   private async saveState() {
     const i = Math.max(0, Math.min(this.index, this.points.length - 1));
@@ -65,8 +64,8 @@ export class TrackPlayer {
   }
 
   /**
-   * ✅ 修复 2: 启动逻辑
-   * 必须在 restoreState 之后，基于【剩余路径】计算 ETA
+   * 🟢 修改 2: 启动逻辑 (智能 ETA 版)
+   * 只有在第一次发货时才计算并写入 ETA，后续恢复运行不修改 ETA
    */
   public async startWithPoints(points: { lng: number; lat: number }[]) {
     if (!points?.length) return;
@@ -76,24 +75,34 @@ export class TrackPlayer {
     // 1. 先尝试恢复之前的进度
     await this.restoreState();
 
-    // 2. ⭐ 关键修复：只计算剩余路程的时间 ⭐
-    // 如果是从第 500 个点开始跑，ETA 应该只包含从 500 到终点的时间
-    const remainingPoints = this.points.slice(this.index);
-    const remainingSeconds = calcETASeconds(remainingPoints, this.speed);
-    
-    // 3. 更新预计到达时间 (当前时间 + 剩余时间)
-    const etaTime = Date.now() + remainingSeconds * 1000;
+    // 2. 准备更新的数据
+    const updateData: any = {
+      status: "配送中",
+      routePoints: points,
+      "trackState.total": points.length
+    };
+
+    // 3. 核心逻辑：只在从头开始时计算 ETA
+    if (this.index === 0) {
+      // 🟢 设定计算 ETA 用的理想速度 (这里也设为 28，与实际速度一致)
+      // 含义：承诺用户按 100km/h 的速度送达
+      const idealSpeed = 28; 
+      
+      // 计算全程需要的秒数
+      const idealSeconds = calcETASeconds(points, idealSpeed);
+      
+      // 写入数据库: ETA = 当前时间 + 理想耗时
+      updateData.eta = Date.now() + idealSeconds * 1000;
+      
+      console.log(`[TrackPlayer] 首次发货，设定承诺 ETA: ${new Date(updateData.eta).toLocaleString()} (基于速度 ${idealSpeed}m/s)`);
+    } else {
+      // 如果不是从 0 开始（说明是中途恢复），绝对不要改 ETA！
+      // 这样如果服务器停了一段时间，ETA 不变，就会自然导致超时
+      console.log(`[TrackPlayer] 恢复运行，保留原始 ETA 不变`);
+    }
 
     // 4. 更新数据库
-    // 注意：不要覆盖 trackState.index，因为我们刚恢复了它
-    await OrderModel.updateOne({ _id: this.orderId }, {
-      $set: { 
-        eta: etaTime, 
-        status: "配送中", 
-        routePoints: points, 
-        "trackState.total": points.length 
-      }
-    });
+    await OrderModel.updateOne({ _id: this.orderId }, { $set: updateData });
 
     this.isPlaying = true;
     this.nextTick();
@@ -138,6 +147,7 @@ export class TrackPlayer {
     const nextPoint = this.points[this.index + 1];
 
     // 3. 实时计算剩余时间 (用于前端倒计时修正)
+    // 这里使用的是 this.speed (28)，所以倒计时会按 100km/h 的速度递减
     const remainingRoute = this.points.slice(this.index);
     const remainingSeconds = calcETASeconds(remainingRoute, this.speed);
 
@@ -162,7 +172,7 @@ export class TrackPlayer {
     // 6. 推进索引
     this.index++;
     
-    // 每走 5 步存一次数据库，避免 I/O 过于频繁
+    // 每走 5 步存一次数据库
     if (this.index % 5 === 0) await this.saveState();
 
     // 递归调用下一步

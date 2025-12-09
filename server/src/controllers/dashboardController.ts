@@ -36,7 +36,6 @@ export async function getOrderHeatmap(req: Request, res: Response) {
   }
 }
 
-
 export async function getDeliveryTimeStats(req: Request, res: Response) {
   try {
     const merchantId = getMerchantId(req);

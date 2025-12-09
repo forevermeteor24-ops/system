@@ -1,10 +1,39 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { fetchOrder, updateStatus, deleteOrder } from "../api/orders";
-import { formatRemainingETA } from "../utils/formatETA";
 
-// 声明 AMap 类型防止 TS 报错
+// 声明 AMap 类型
 declare const AMap: any;
+
+// 🟢 工具函数：计算时间状态 (精确到分钟)
+const calculateTimeStatus = (etaTimestamp: number) => {
+  const now = Date.now();
+  const diff = etaTimestamp - now;
+
+  // 情况 A: 还没到时间 (正常配送中)
+  if (diff > 0) {
+    const hours = Math.floor(diff / 3600000);
+    const minutes = Math.floor((diff % 3600000) / 60000);
+    return {
+      text: `预计剩余 ${hours}小时 ${minutes}分`,
+      color: '#1890ff',
+      bgColor: '#e6f7ff',
+      borderColor: '#1890ff'
+    };
+  } 
+  // 情况 B: 已经超时
+  else {
+    const absDiff = Math.abs(diff); // 取绝对值
+    const hours = Math.floor(absDiff / 3600000);
+    const minutes = Math.floor((absDiff % 3600000) / 60000);
+    return {
+      text: `已超时 ${hours}小时 ${minutes}分`,
+      color: '#d9363e', // 深红文字
+      bgColor: '#fff1f0', // 淡红背景
+      borderColor: '#ffccc7' // 红色边框
+    };
+  }
+};
 
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
@@ -12,11 +41,13 @@ export default function OrderDetail() {
 
   // --- 状态管理 ---
   const [order, setOrder] = useState<any>(null);
-  const [remainingTime, setRemainingTime] = useState<string>("--");
-  const [realtimeLabel, setRealtimeLabel] = useState<string>("");
-  const [markerReady, setMarkerReady] = useState(false); 
   
-  // 搜索框状态
+  // 🟢 修改状态：timeStatus 用来存文案和样式
+  const [timeStatus, setTimeStatus] = useState({ 
+    text: "--", color: "#888", bgColor: "#f5f5f5", borderColor: "#ddd" 
+  });
+
+  const [markerReady, setMarkerReady] = useState(false); 
   const [searchId, setSearchId] = useState("");
 
   // --- Refs ---
@@ -36,26 +67,32 @@ export default function OrderDetail() {
   /* ---------------- 1. 加载订单 & 初始化地图 ---------------- */
   useEffect(() => {
     if (!id) return;
-
     let mounted = true;
     
-    // 切换订单时重置状态
+    // 重置
     setOrder(null);
-    setRemainingTime("--");
-    setRealtimeLabel("");
+    setTimeStatus({ text: "加载中...", color: "#888", bgColor: "#f5f5f5", borderColor: "#ddd" });
     setMarkerReady(false);
 
     (async () => {
       try {
-        // ⭐ 后端已包含自动结算逻辑，返回的 status 是准确的
         const o = await fetchOrder(id);
         if (!mounted) return;
         setOrder(o);
 
-        // 等待 DOM 渲染
+        // 如果订单已结束，直接显示状态
+        if (["已送达", "已完成", "商家已取消"].includes(o.status)) {
+            setTimeStatus({ 
+                text: o.status, 
+                color: "#52c41a", 
+                bgColor: "#f6ffed", 
+                borderColor: "#b7eb8f" 
+            });
+        }
+
         if (!mapRef.current) return;
 
-        // 初始化地图实例 (单例模式)
+        // 初始化地图
         if (!mapInstanceRef.current) {
           mapInstanceRef.current = new AMap.Map(mapRef.current, {
             zoom: 13,
@@ -63,7 +100,6 @@ export default function OrderDetail() {
             viewMode: "3D", 
             mapStyle: "amap://styles/whitesmoke", 
           });
-
           mapInstanceRef.current.plugin(["AMap.MoveAnimation", "AMap.ToolBar", "AMap.Scale"], () => {
              mapInstanceRef.current.addControl(new AMap.ToolBar({ position: 'RB' }));
              mapInstanceRef.current.addControl(new AMap.Scale());
@@ -73,14 +109,11 @@ export default function OrderDetail() {
         const map = mapInstanceRef.current;
         const points = o.routePoints ?? [];
 
-        // 清理旧覆盖物
         if (polylineRef.current) map.remove(polylineRef.current);
         if (markerRef.current) map.remove(markerRef.current);
 
-        // 绘制路径
         if (points.length > 0) {
           const path = points.map((p: any) => new AMap.LngLat(p.lng, p.lat));
-          
           const polyline = new AMap.Polyline({
             path,
             strokeWeight: 6,
@@ -90,28 +123,18 @@ export default function OrderDetail() {
           });
           map.add(polyline);
           polylineRef.current = polyline;
-          
           map.setFitView([polyline], true, [60, 60, 60, 60]);
 
-          // ========================= 🟢 逻辑简化 =========================
-          // 不再需要前端猜测是否超时，直接信赖后端状态
           let startPos;
           const hasTrackData = (o as any).trackState?.lastPosition;
 
-          // 1. 状态是“已送达/已完成” -> 终点
           if (["已送达", "已完成"].includes(o.status)) {
              startPos = path[path.length - 1]; 
-             setRemainingTime("已送达");
-          } 
-          // 2. 状态是“配送中”且有位置数据 -> 恢复位置
-          else if (hasTrackData) {
+          } else if (hasTrackData) {
              startPos = new AMap.LngLat(hasTrackData.lng, hasTrackData.lat);
-          } 
-          // 3. 其他情况 -> 起点
-          else {
+          } else {
              startPos = path[0];
           }
-          // ===============================================================
 
           const carIcon = new AMap.Icon({
             size: new AMap.Size(52, 26),
@@ -143,12 +166,10 @@ export default function OrderDetail() {
 
   /* ---------------- 2. WebSocket 实时追踪 ---------------- */
   useEffect(() => {
-    // 拦截：如果是已结束状态，绝对不连 WS
     if (!order || ["已送达", "已完成", "商家已取消"].includes(order.status)) return;
     if ((order.status !== "配送中" && order.status !== "待发货") || !markerReady) return;
   
     if (wsRef.current) wsRef.current.close();
-
     const ws = new WebSocket("wss://system-backend.zeabur.app"); // 替换真实地址
     wsRef.current = ws;
 
@@ -157,54 +178,26 @@ export default function OrderDetail() {
       ws.send(JSON.stringify({ type: "request-current", orderId: order._id }));
     };
     
-    ws.onmessage = async (ev) => { // 👈 注意：这里加了 async
+    ws.onmessage = async (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-
-        // ======================= 🟢 核心修复：防止僵尸订单复活 =======================
-        // 当服务器重启后，会告诉前端 "no-track" (我内存里没这个车)
         if (msg.type === "no-track") {
-           const originalEta = order.eta ? new Date(order.eta).getTime() : 0;
-           const now = Date.now();
 
-           // 判断：如果当前时间已经超过了原本的 ETA
-           // 说明这单肯定早就跑完了，绝对不能发送 start-track，否则 ETA 会被重置到未来！
-           if (originalEta && now > originalEta) {
-               console.warn("检测到订单超时 (服务器重启导致)，正在强制结算...");
-
-               // 1. 调用 API 告诉数据库：这单完了
-               await updateStatus(order._id, "已送达");
-
-               // 2. 更新前端界面，让车去终点，按钮变绿
-               setOrder((prev: any) => ({ ...prev, status: "已送达" }));
-               setRemainingTime("已送达");
-
-               // 3. 断开连接，不再接收消息
-               ws.close();
-               return; 
-           }
-
-           // 只有真的还没超时（比如刚发货服务器就重启了），才允许恢复运行
-           console.log("服务器无记录且未超时，正在恢复运行...");
+           console.log("恢复运行...");
            ws.send(JSON.stringify({ 
              type: "start-track", 
              orderId: order._id,
              points: order.routePoints 
            }));
         }
-        // ===========================================================================
 
-        // 同步当前位置
         if (msg.type === "current-state" && msg.position && markerRef.current) {
            const pos = new AMap.LngLat(msg.position.lng, msg.position.lat);
            markerRef.current.setPosition(pos);
         }
         
-        // 实时位置更新
         if (msg.type === "location" && markerRef.current) {
-          if (msg.remainingSeconds !== undefined) {
-             setRemainingTime(formatRemainingETA(Date.now() + msg.remainingSeconds * 1000));
-          }
+          // 🟢 移除了对 setTimeStatus 的更新，防止后端覆盖
           
           if (msg.nextPosition && msg.duration > 0) {
             const nextLngLat = new AMap.LngLat(msg.nextPosition.lng, msg.nextPosition.lat);
@@ -214,12 +207,9 @@ export default function OrderDetail() {
             });
           }
           
-          // 正常跑完结束
           if (msg.finished) {
-             // 这里也要记得调用一下后端 API 兜底（虽然自动结算有了，多调一次无害）
              await updateStatus(order._id, "已送达");
              setOrder((prev: any) => ({ ...prev, status: "已送达" }));
-             setRemainingTime("已送达");
              ws.close();
           }
         }
@@ -229,18 +219,32 @@ export default function OrderDetail() {
     return () => { if (ws.readyState === 1) ws.close(); };
   }, [order?._id, order?.status, markerReady]);
 
-  /* ---------------- 3. 辅助功能 ---------------- */
+  /* ---------------- 3. 核心倒计时/超时计算器 ---------------- */
   useEffect(() => {
-    if (!order?.eta || ["已送达", "已完成", "商家已取消"].includes(order?.status)) {
-      setRemainingTime("已送达"); 
-      return;
+    if (["已送达", "已完成"].includes(order?.status)) {
+        setTimeStatus({ text: "已送达", color: "#52c41a", bgColor: "#f6ffed", borderColor: "#b7eb8f" });
+        return;
     }
+    if (order?.status === "商家已取消") {
+        setTimeStatus({ text: "已取消", color: "#999", bgColor: "#f5f5f5", borderColor: "#ddd" });
+        return;
+    }
+    if (!order?.eta) return;
+
+    const etaTimestamp = new Date(order.eta).getTime();
+
+    // 立即执行一次
+    setTimeStatus(calculateTimeStatus(etaTimestamp));
+
+    // 每分钟刷新一次
     const timer = setInterval(() => {
-      setRemainingTime(formatRemainingETA(order.eta));
-    }, 1000);
+      setTimeStatus(calculateTimeStatus(etaTimestamp));
+    }, 60000); 
+
     return () => clearInterval(timer);
   }, [order?.eta, order?.status]);
 
+  /* ---------------- 4. 辅助函数 ---------------- */
   const doAction = async (action: 'confirm' | 'cancel' | 'return' | 'delete') => {
     if (!order) return;
     try {
@@ -261,12 +265,11 @@ export default function OrderDetail() {
     } catch(e) { alert("操作失败"); }
   };
 
-  /* ---------------- 4. 渲染视图 ---------------- */
+  /* ---------------- 5. 渲染视图 ---------------- */
   const merchantInfo = order && typeof order.merchantId === 'object' ? order.merchantId : null;
   const shopName = merchantInfo?.username || "未知商家";
   const shopPhone = merchantInfo?.phone || "暂无电话";
   
-  // 用于 UI 显示 (例如显示地图上的监控标签)
   const isEtaPassed = order?.eta && new Date(order.eta).getTime() < Date.now();
 
   return (
@@ -305,9 +308,15 @@ export default function OrderDetail() {
                  {order?.status || "加载中..."}
                </div>
                
+               {/* 🟢 倒计时/超时标签 */}
                {order?.status === "配送中" && (
-                 <div style={styles.etaBadge}>
-                   预计送达: {realtimeLabel || remainingTime}
+                 <div style={{
+                    ...styles.etaBadge,
+                    color: timeStatus.color,
+                    backgroundColor: timeStatus.bgColor,
+                    border: `1px solid ${timeStatus.borderColor}`
+                 }}>
+                   {timeStatus.text}
                  </div>
                )}
              </div>
@@ -322,19 +331,12 @@ export default function OrderDetail() {
              
              {/* 操作按钮组 */}
              <div style={styles.actionGroup}>
-               {/* 
-                  🟢 简化后的逻辑：
-                  因为后端会自动把超时的订单改为“已送达”，
-                  所以这里不需要再判断 isEtaPassed，只看 status 即可。
-               */}
                {order?.status === "已送达" && (
                  <button style={styles.btnPrimary} onClick={() => doAction('confirm')}>确认收货</button>
                )}
-               
                {(order?.status === "待发货" || order?.status === "配送中") && (
                  <button style={styles.btnDangerGhost} onClick={() => doAction('return')}>申请退货</button>
                )}
-               
                {(order?.status === "已完成" || order?.status === "商家已取消") && (
                  <button style={styles.btnGhost} onClick={() => doAction('delete')}>删除订单</button>
                )}

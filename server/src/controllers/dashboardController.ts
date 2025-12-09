@@ -36,14 +36,13 @@ export async function getOrderHeatmap(req: Request, res: Response) {
   }
 }
 
-// ... imports ...
 
 export async function getDeliveryTimeStats(req: Request, res: Response) {
   try {
     const merchantId = getMerchantId(req);
     if (!merchantId) return res.status(401).json({ error: "无法获取用户信息" });
 
-    // 1. 数据清洗 (逻辑不变)
+    // 1. 数据清洗（逻辑不变）
     const corruptedOrders = await Order.find({
       merchantId: merchantId,
       status: "已送达",
@@ -53,14 +52,14 @@ export async function getDeliveryTimeStats(req: Request, res: Response) {
     if (corruptedOrders.length > 0) {
       const updates = corruptedOrders.map(order => {
         const fixTime = new Date(order.createdAt);
-        fixTime.setHours(fixTime.getHours() + 24); // 🟢 默认修复为 24小时后送达
+        fixTime.setHours(fixTime.getHours() + 24); 
         order.deliveredAt = fixTime.getTime();
         return order.save();
       });
       await Promise.all(updates);
     }
 
-    // 2. 查询数据 (查 eta)
+    // 2. 查询数据
     const orders = await Order.find({
       merchantId: merchantId, 
       status: "已送达",
@@ -69,44 +68,62 @@ export async function getDeliveryTimeStats(req: Request, res: Response) {
 
     // 3. 统计逻辑
     let totalDuration = 0;
-    
-    // 🟢 修改区间定义：[0-12h, 12-24h, 24-48h, 48h+]
-    const distribution = [0, 0, 0, 0]; 
-    
+    const distribution = [0, 0, 0, 0]; // 0-12h, 12-24h, 24-48h, 48h+
     let onTimeCount = 0;
     let lateCount = 0;
 
     const validOrders = orders.filter(o => o.createdAt && o.deliveredAt);
 
     validOrders.forEach(o => {
-      const deliveredTime = new Date(o.deliveredAt).getTime();
-      const createdTime = new Date(o.createdAt).getTime();
-
-      // --- A. 计算柱状图分布 (按小时) ---
-      const duration = deliveredTime - createdTime;
-      totalDuration += duration;
+      // 🛡️ 强制转换日期格式，防止数据库里是字符串导致计算失败
+      const start = new Date(o.createdAt).getTime();
+      const end = new Date(o.deliveredAt).getTime();
       
-      const hours = duration / (1000 * 60 * 60); // 🟢 转换为小时
+      // 防止无效时间
+      if (isNaN(start) || isNaN(end)) return;
 
-      if (hours <= 12) distribution[0]++;      // 极速
-      else if (hours <= 24) distribution[1]++; // 正常 (1天内)
-      else if (hours <= 48) distribution[2]++; // 稍慢 (2天内)
-      else distribution[3]++;                  // 慢 (2天以上)
+      // --- A. 柱状图逻辑 (耗时分布 - 小时) ---
+      const duration = end - start;
+      
+      // 只有耗时大于0才统计
+      if (duration > 0) {
+        totalDuration += duration;
+        const hours = duration / (1000 * 60 * 60); // 转为小时
 
-      // --- B. 健康度 (超时逻辑不变，依然基于 ETA) ---
-      if (o.eta && deliveredTime > new Date(o.eta).getTime()) {
-        lateCount++; 
+        if (hours <= 12) distribution[0]++;
+        else if (hours <= 24) distribution[1]++;
+        else if (hours <= 48) distribution[2]++;
+        else distribution[3]++;
+      }
+
+      // --- B. 饼图逻辑 (是否超时) ---
+      if (o.eta) {
+        const etaTime = new Date(o.eta).getTime();
+        // 增加 1分钟 缓冲，防止毫秒级误差
+        if (end > etaTime + 60000) {
+          lateCount++; 
+        } else {
+          onTimeCount++;
+        }
       } else {
+        // 如果没有 ETA，默认算准时
         onTimeCount++;
       }
     });
 
     const avg = validOrders.length ? Math.round(totalDuration / validOrders.length) : 0;
 
+    // 🟢 调试日志：在后端控制台打印一下，看看算出什么了
+    console.log("📊 统计结果:", {
+        count: validOrders.length,
+        dist: distribution,
+        health: { onTime: onTimeCount, late: lateCount }
+    });
+
     res.json({
-      avgDeliveryTime: avg, // 依然返回毫秒，前端自己转单位
+      avgDeliveryTime: avg,
       count: validOrders.length,
-      distribution: distribution,
+      distribution: distribution, 
       health: {
         onTime: onTimeCount,
         late: lateCount

@@ -5,7 +5,7 @@ import * as echarts from "echarts";
 import "echarts-extension-amap";
 import AMapLoader from "@amap/amap-jsapi-loader";
 
-// ----------- 🛡️ 安全密钥 (防止重复执行) -----------
+// ----------- 🛡️ 安全密钥 -----------
 if (!(window as any)._AMapSecurityConfig) {
   (window as any)._AMapSecurityConfig = {
     securityJsCode: "77a072080cb11c735ea19b7c59ad9781", // 你的安全密钥
@@ -21,13 +21,13 @@ type AbnormalOrder = { _id: string; title: string; eta: number };
 
 const BASE = "https://system-backend.zeabur.app";
 
-// 📍 静态演示数据
+// 📍 静态演示数据 [经度, 纬度, 数量]
 const MOCK_POINTS: Point[] = [
-  [116.40, 39.90, 50], // 北京
-  [121.47, 31.23, 40], // 上海
-  [113.26, 23.12, 30], // 广州
-  [104.06, 30.67, 20], // 成都
-  [102.71, 25.04, 20], // 昆明
+  [116.40, 39.90, 50], // 北京 - 50单
+  [121.47, 31.23, 40], // 上海 - 40单
+  [113.26, 23.12, 30], // 广州 - 30单
+  [104.06, 30.67, 20], // 成都 - 20单
+  [102.71, 25.04, 5],  // 昆明 - 5单
 ];
 
 export default function Dashboard() {
@@ -45,7 +45,7 @@ export default function Dashboard() {
   const gaugeInstance = useRef<echarts.ECharts | null>(null);
   const pieInstance = useRef<echarts.ECharts | null>(null);
 
-  // 1. 加载高德地图 API (带防重复检测)
+  // 1. 加载高德地图 API
   useEffect(() => {
     if ((window as any).AMap) {
       setMapReady(true);
@@ -92,6 +92,7 @@ export default function Dashboard() {
           if (rawPoints.length === 0) {
             setMapData(MOCK_POINTS);
           } else {
+            // [lat, lng, val] -> [lng, lat, val]
             const points = rawPoints.map((p: any) => [p[1], p[0], p[2]]);
             setMapData(points);
           }
@@ -128,7 +129,7 @@ export default function Dashboard() {
     loadData();
   }, []);
 
-  // 3. 渲染地图
+  // 3. 渲染地图 (核心修改部分)
   useEffect(() => {
     if (!mapReady || !mapChartRef.current) return;
 
@@ -138,41 +139,68 @@ export default function Dashboard() {
     mapInstance.current = echarts.init(mapChartRef.current);
 
     const option: any = {
-      tooltip: { trigger: "item" },
+      // 🟢 改进 1：悬浮提示，显示具体的数值
+      tooltip: {
+        trigger: "item",
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderWidth: 0,
+        textStyle: { color: '#333' },
+        formatter: (params: any) => {
+          // params.value[2] 就是订单数量
+          return `
+            <div style="font-weight:bold; font-size:14px; margin-bottom:5px;">📍 区域详情</div>
+            经度: ${params.value[0]}<br/>
+            纬度: ${params.value[1]}<br/>
+            <div style="margin-top:5px; color:#ef4444; font-weight:bold;">
+              📦 订单量: ${params.value[2]} 单
+            </div>
+          `;
+        }
+      },
       amap: {
         center: [105.0, 36.0],
         zoom: 4,
         resizeEnable: true,
         mapStyle: "amap://styles/normal",
         renderOnMoving: true,
-        // 🛠️ 修复警告: 替换 echartsLayerZIndex 为 echartsLayerInteractive
         echartsLayerInteractive: true, 
       },
-      // 🛠️ 核心修复: Heatmap 必须有 visualMap 才能工作！
-      // 即使 show: false 也要写，否则报错
       visualMap: {
-        show: false, // 隐藏左下角的色条，保持界面清爽
+        show: false,
         min: 0,
         max: 60,
-        inRange: {
-          // 定义热力图的渐变色
-          color: ["#79ccff", "#fffb00", "#ff3333"]
-        }
+        inRange: { color: ["#79ccff", "#fffb00", "#ff3333"] }
       },
       series: [
-        // 1. 呼吸点 (最醒目)
+        // 1. 呼吸点 (显示文字标签)
         {
           name: "实时订单",
           type: "effectScatter",
           coordinateSystem: "amap",
           data: mapData,
-          symbolSize: 20,
+          // 🟢 改进 2：动态大小，订单越多，圆点越大 (最小15px，最大30px)
+          symbolSize: function (val: any) {
+            return Math.min(Math.max(val[2] / 2, 15), 30);
+          },
           showEffectOn: "render",
           rippleEffect: { brushType: "stroke", scale: 4 },
           itemStyle: { color: "#ef4444", shadowBlur: 10, shadowColor: "#333" },
+          
+          // 🟢 改进 3：直接在地图上显示数字
+          label: {
+            show: true,           // 开启标签
+            position: 'top',      // 显示在圆点上方
+            formatter: '{@2}单',  // 格式：取数组第3个值(index 2) + "单"
+            color: '#000',        // 黑色文字
+            fontWeight: 'bold',   // 加粗
+            fontSize: 12,
+            backgroundColor: 'rgba(255, 255, 255, 0.7)', // 半透明白底，防止看不清
+            padding: [2, 4],      // 内边距
+            borderRadius: 4       // 圆角
+          },
           zlevel: 1,
         },
-        // 2. 热力图 (背景氛围)
+        // 2. 热力图
         {
             name: "热力图",
             type: "heatmap",
@@ -192,7 +220,7 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", handleResize);
   }, [mapReady, mapData]);
 
-  // 4. 其他图表
+  // 4. 其他图表 (保持不变)
   useEffect(() => {
     if (gaugeChartRef.current && !gaugeInstance.current) gaugeInstance.current = echarts.init(gaugeChartRef.current);
     const avgMins = Math.round(deliveryStats.avgDeliveryTime / 60000);

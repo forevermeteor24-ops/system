@@ -5,6 +5,6 @@ import { auth } from '../middleware/authMiddleware';
 const router = Router();
 
 router.get("/", getMerchants);
-router.put("/delivery-zone", auth, updateDeliveryZone);
+router.put("/delivery-zone", auth(), updateDeliveryZone);
 
 export default router;

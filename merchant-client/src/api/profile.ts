@@ -18,7 +18,7 @@ export interface Profile {
 /* API 地址配置 */
 const API_ROOT = "https://system-backend.zeabur.app/api";
 const AUTH_URL = `${API_ROOT}/auth/me`;
-const MERCHANT_URL = `${API_ROOT}/merchant`;
+const MERCHANT_URL = `${API_ROOT}/merchants`;
 
 function authHeader() {
   return {

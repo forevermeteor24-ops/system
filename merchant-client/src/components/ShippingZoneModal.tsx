@@ -48,7 +48,7 @@ const DrawControl = ({ onCreated }: { onCreated: (layer: any) => void }) => {
         polyline: false,
         polygon: {
           allowIntersection: false,
-          showArea: true,
+          showArea: false,
         },
       },
     });

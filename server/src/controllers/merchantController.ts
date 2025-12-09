@@ -15,7 +15,7 @@ export async function getMerchants(req: Request, res: Response) {
 }
 export const updateDeliveryZone = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = req.user?.userId; 
     const { coordinates } = req.body; // Expecting [[[lng, lat], ...]]
 
     await User.findByIdAndUpdate(userId, {

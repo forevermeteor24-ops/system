@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "tract-very-columns-cafe.trycloudflare.com"
+      "polar-nano-terrorist-consisting.trycloudflare.com"
     ],
   },
 });

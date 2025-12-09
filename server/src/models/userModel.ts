@@ -13,6 +13,11 @@ export interface UserDocument extends Document {
   address: Address;
 
   phone: string;   // ⭐ 新增电话号码
+   // ✅ 新增：可选的配送范围字段
+   deliveryZone?: {
+    type: "Polygon";
+    coordinates: number[][][];
+    } 
 }
 
 const userSchema = new mongoose.Schema<UserDocument>(
@@ -28,6 +33,11 @@ const userSchema = new mongoose.Schema<UserDocument>(
       lng: Number,
       lat: Number,
     },
+    // ✅ 新增：在最后添加这个字段
+    deliveryZone: {
+      type: { type: String, enum: ["Polygon"], default: "Polygon" },
+      coordinates: { type: [[[Number]]] }, // GeoJSON 格式
+      }
   },
   { timestamps: true }
 );

@@ -115,7 +115,8 @@ export async function createOrder(req: Request, res: Response) {
 /** 获取订单列表（支持排序 + 状态筛选） */
 export async function getOrders(req: Request, res: Response) {
   try {
-    const actor = req.user;
+    // 强制断言 req.user 存在，或者使用你自定义的类型
+    const actor = (req as any).user;
     if (!actor) return res.status(401).json({ error: "未登录" });
 
     // 1. 初始化过滤条件（保留原有的权限控制）
@@ -128,6 +129,41 @@ export async function getOrders(req: Request, res: Response) {
     if (statusParam) {
       filter.status = statusParam;
     }
+
+    /** -----------------------
+     *  ⭐ 新增：配送范围筛选 (Region Filter)
+     *  接收前端参数：region = 'inside' | 'outside'
+     ------------------------ */
+    const regionParam = req.query.region as string; 
+    
+    // 只有商家且传递了筛选参数时才执行
+    if (actor.role === "merchant" && (regionParam === "inside" || regionParam === "outside")) {
+      // 查出商家的配送范围配置
+      const merchant = await User.findById(actor.userId);
+      
+      // 只有当商家确实设置了 deliveryZone 时才生效
+      if (merchant && merchant.deliveryZone && merchant.deliveryZone.coordinates.length > 0) {
+        
+        // 定义“在范围内”的查询条件
+        const geoQuery = {
+          $geoWithin: {
+            $geometry: merchant.deliveryZone
+          }
+        };
+
+        if (regionParam === "inside") {
+          // 筛选：只看范围内的
+          filter.location = geoQuery;
+        } else {
+          // 筛选：只看范围外的 (逻辑：位置存在 且 不在范围内)
+          filter.location = { 
+            $not: geoQuery,
+            $exists: true // 排除掉那些完全没有坐标的老订单
+          };
+        }
+      }
+    }
+    // -----------------------
 
     // 排序功能
     const sortParam = req.query.sort as string;
@@ -143,7 +179,7 @@ export async function getOrders(req: Request, res: Response) {
     const list = await OrderModel.find(filter).sort(sortRule);
 
     /** -----------------------
-     *  ⭐ 新增：列表页被动结算 (自动修复僵尸订单)
+     *  ⭐ 原有逻辑保持不变：列表页被动结算 (自动修复僵尸订单)
      *  遍历查出来的列表，如果发现有超时未完成的，自动修正
      ------------------------ */
     const now = new Date();
@@ -159,8 +195,6 @@ export async function getOrders(req: Request, res: Response) {
 
     // 如果有需要更新的订单，并行写入数据库
     if (updates.length > 0) {
-      // 使用 Promise.allSettled 防止某一个保存失败影响整个列表返回
-      // 也可以用 await Promise.all(updates);
       await Promise.allSettled(updates); 
     }
 
@@ -170,6 +204,7 @@ export async function getOrders(req: Request, res: Response) {
     return res.status(500).json({ error: "获取订单列表失败" });
   }
 }
+
 
 
 export async function getOrder(req: Request, res: Response) {

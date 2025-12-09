@@ -74,21 +74,46 @@ function authHeader() {
 /* ===========================
    1. 获取订单列表
 =========================== */
-export async function fetchOrders(): Promise<Order[]> {
-  const res = await fetch(BASE, { headers: authHeader() });
+// 定义查询参数接口
+interface FetchOrdersParams {
+  region?: 'inside' | 'outside'; // 新增筛选参数
+  status?: string;               // 顺便支持状态筛选
+  sort?: string;                 // 顺便支持排序
+}
+
+export async function fetchOrders(params?: FetchOrdersParams): Promise<Order[]> {
+  // 使用 URL 对象构建带参数的 URL，比手动拼接字符串更安全
+  const url = new URL(BASE);
+  
+  if (params) {
+    if (params.region) url.searchParams.append('region', params.region);
+    if (params.status) url.searchParams.append('status', params.status);
+    if (params.sort) url.searchParams.append('sort', params.sort);
+  }
+
+  const res = await fetch(url.toString(), { headers: authHeader() });
   if (!res.ok) throw new Error("获取订单列表失败");
   return res.json();
 }
 
 /* ===========================
-   3. 获取待发货列表 (原生 fetch 版)
+   3. 获取待发货列表 (支持区域筛选)
 =========================== */
-export async function fetchPendingOrders(): Promise<Order[]> {
-  // 手动拼接 query 参数
-  // 注意：fetch 不像 axios 自动处理 params，需要拼接到 URL 后
-  const url = `${BASE}?status=${encodeURIComponent('待发货')}`;
+export async function fetchPendingOrders(region?: 'inside' | 'outside'): Promise<Order[]> {
+  // 1. 创建 URL 对象
+  const url = new URL(BASE);
   
-  const res = await fetch(url, { 
+  // 2. 固定添加 status 参数
+  url.searchParams.append('status', '待发货');
+
+  // 3. 如果传入了 region，则添加该参数
+  if (region) {
+    url.searchParams.append('region', region);
+  }
+  
+  // 最终生成的 URL 类似: .../api/orders?status=待发货&region=inside
+  
+  const res = await fetch(url.toString(), { 
     headers: authHeader() 
   });
 

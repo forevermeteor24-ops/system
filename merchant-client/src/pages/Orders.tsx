@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchOrders, updateStatus, shipOrder, deleteOrder, type Order } from "../api/orders";
 import { fetchProductsByMerchant, createProduct, updateProduct, deleteProduct } from "../api/products";
+import ShippingZoneModal from "../components/ShippingZoneModal"; // ✅ 1. 引入弹窗组件
 
 // === 类型定义 ===
 type ProductItem = {
@@ -13,6 +14,9 @@ type ProductItem = {
 
 // 排序选项类型
 type SortOption = 'newest' | 'oldest' | 'price_high' | 'price_low';
+
+// 区域筛选类型 ✅ 2. 新增类型
+type RegionFilter = 'all' | 'inside' | 'outside';
 
 // 订单状态常量
 const ORDER_STATUSES = [
@@ -41,8 +45,13 @@ export default function MerchantHome() {
   // === 订单筛选与排序状态 ===
   const [filterStatus, setFilterStatus] = useState<string>("全部");
   const [sortOption, setSortOption] = useState<SortOption>('newest');
+  
+  // ✅ 3. 新增：区域筛选状态
+  const [regionFilter, setRegionFilter] = useState<RegionFilter>('all');
+  // ✅ 4. 新增：控制划定范围弹窗
+  const [showZoneModal, setShowZoneModal] = useState(false);
 
-  // === 模态框状态 ===
+  // === 模态框状态 (商品) ===
   const [showProductModal, setShowProductModal] = useState(false);
   const [productToEdit, setProductToEdit] = useState<ProductItem | null>(null);
   const [newProduct, setNewProduct] = useState<{ name: string; price: number }>({ name: "", price: 0 });
@@ -60,20 +69,30 @@ export default function MerchantHome() {
     setMerchantName(name);
   }, [navigate]);
 
+  // 加载数据 (初始化)
   useEffect(() => {
     if (!merchantId) return;
     loadAllData();
   }, [merchantId]);
 
+  // ✅ 5. 监听区域筛选变化，自动重新拉取订单
+  useEffect(() => {
+    if (!merchantId) return;
+    // 只有在订单 Tab 且 筛选条件变化时才单独刷新订单
+    if (activeTab === 'orders') {
+        loadOrders();
+    }
+  }, [regionFilter]);
+
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [pList, oList] = await Promise.all([
+      const [pList] = await Promise.all([
         fetchProductsByMerchant(merchantId),
-        fetchOrders()
+        // orders 会通过下面的 loadOrders 获取
       ]);
       setProducts(pList);
-      setOrders(oList);
+      await loadOrders(); // 调用统一的加载订单方法
     } catch (err) {
       console.error("加载数据失败", err);
       alert("加载数据失败");
@@ -82,9 +101,12 @@ export default function MerchantHome() {
     }
   };
 
+  // ✅ 6. 修改 loadOrders 支持传参
   const loadOrders = async () => {
     try {
-      const list = await fetchOrders();
+      // 如果 regionFilter 是 'all'，则不传参数，获取所有
+      const params = regionFilter === 'all' ? undefined : { region: regionFilter };
+      const list = await fetchOrders(params);
       setOrders(list);
     } catch (err) { console.error(err); }
   };
@@ -96,7 +118,8 @@ export default function MerchantHome() {
     } catch (err) { console.error(err); }
   }
 
-  // === 计算属性：处理订单的过滤与排序 ===
+  // === 计算属性：处理订单的过滤 (本地状态过滤) 与排序 ===
+  // 注意：Region 过滤是服务器端完成的，这里只处理 Status 和 Sort
   const displayedOrders = useMemo(() => {
     let result = [...orders];
 
@@ -257,6 +280,7 @@ export default function MerchantHome() {
             {activeTab === 'orders' && (
               <div>
                 <div style={styles.toolbar}>
+                  {/* 左侧：状态 Tabs */}
                   <div style={styles.filterGroup}>
                     {ORDER_STATUSES.map(status => (
                       <button
@@ -271,8 +295,42 @@ export default function MerchantHome() {
 
                   {/* 右侧：功能按钮与排序 */}
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+
+                    {/* ✅ 7. 新增：区域筛选下拉框 */}
+                    <div style={styles.sortGroup}>
+                      <span style={{fontSize:'12px', marginRight:'5px'}}>📍</span>
+                      <select
+                        value={regionFilter}
+                        onChange={(e) => setRegionFilter(e.target.value as RegionFilter)}
+                        style={{...styles.selectInput, border: regionFilter !== 'all' ? '1px solid #1890ff' : '1px solid #ddd'}}
+                      >
+                        <option value="all">全区域</option>
+                        <option value="inside">✅ 配送范围内</option>
+                        <option value="outside">🚫 范围外 (超区)</option>
+                      </select>
+                    </div>
+
+                    {/* ✅ 8. 新增：划定范围按钮 */}
+                    <button 
+                      onClick={() => setShowZoneModal(true)}
+                      style={{
+                        padding: '6px 12px',
+                        background: 'white',
+                        color: '#333',
+                        border: '1px solid #ddd',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '13px',
+                      }}
+                      title="在地图上划出可配送的多边形区域"
+                    >
+                      ⚙️ 划定范围
+                    </button>
                     
-                    {/* ⭐ 新增：跳转到区域批量发货页面 */}
+                    {/* 地图批量发货按钮 */}
                     <button 
                       onClick={() => navigate('/region-shipping')}
                       style={{
@@ -289,11 +347,11 @@ export default function MerchantHome() {
                         fontWeight: 500,
                         boxShadow: '0 2px 6px rgba(24, 144, 255, 0.2)'
                       }}
-                      title="在地图上框选区域进行批量发货"
                     >
                       🗺️ 地图批量发货
                     </button>
 
+                    {/* 排序 */}
                     <div style={styles.sortGroup}>
                       <select 
                         value={sortOption} 
@@ -308,6 +366,25 @@ export default function MerchantHome() {
                     </div>
                   </div>
                 </div>
+
+                {/* 区域筛选提示条 (当选择了筛选时显示) */}
+                {regionFilter !== 'all' && (
+                  <div style={{
+                    background: regionFilter === 'inside' ? '#f6ffed' : '#fff1f0',
+                    border: regionFilter === 'inside' ? '1px solid #b7eb8f' : '1px solid #ffa39e',
+                    padding: '8px 15px',
+                    borderRadius: '6px',
+                    marginBottom: '15px',
+                    fontSize: '13px',
+                    color: regionFilter === 'inside' ? '#389e0d' : '#cf1322'
+                  }}>
+                    {regionFilter === 'inside' 
+                      ? `✨ 当前显示【配送范围内】的订单` 
+                      : `⚠️ 当前显示【超区/无坐标】的订单，请注意核实地址`
+                    }
+                    {filterStatus !== '全部' && ` 且状态为 “${filterStatus}”`}
+                  </div>
+                )}
 
                 <div style={styles.listContainer}>
                   {displayedOrders.length === 0 ? (
@@ -344,8 +421,11 @@ export default function MerchantHome() {
                           <Link to={`/orders/${o._id}`} style={styles.linkBtnSmall}>查看详情</Link>
                           
                           <div style={{display:'flex', gap:'8px'}}>
+                            {/* 如果是超区订单，且待发货，按钮可以变红或提示 */}
                             {o.status === "待发货" && (
-                              <button style={styles.btnPrimarySmall} onClick={() => doShip(o._id)}>发货</button>
+                              <button style={styles.btnPrimarySmall} onClick={() => doShip(o._id)}>
+                                {regionFilter === 'outside' ? '强制发货' : '发货'}
+                              </button>
                             )}
                             {o.status === "用户申请退货" && (
                               <button style={styles.btnDangerSmall} onClick={() => doCancelByMerchant(o._id)}>同意退款</button>
@@ -396,6 +476,13 @@ export default function MerchantHome() {
         )}
       </div>
 
+      {/* ✅ 9. 挂载配送范围弹窗 */}
+      <ShippingZoneModal 
+        isOpen={showZoneModal}
+        onClose={() => setShowZoneModal(false)}
+      />
+
+      {/* 商品弹窗 */}
       {showProductModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>

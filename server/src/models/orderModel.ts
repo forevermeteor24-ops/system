@@ -89,9 +89,29 @@ const OrderSchema = new mongoose.Schema(
         lat: Number,
       },
     },
+    // ✅ 新增：仅用于后端地理筛选的字段 (前端不需要感知)
+    location: {
+      type: { type: String, enum: ["Point"], default: "Point" },
+      coordinates: {
+        type: [Number], 
+        index: "2dsphere", // 建立地理索引
+      },
+    },
   },
   { timestamps: true }
 );
+// ✅ 新增：中间件
+// 每次保存或创建订单时，自动将 address.lng/lat 同步到 location 字段
+OrderSchema.pre("save", function (next) {
+  // 只有当 address 存在且有坐标时才同步
+  if (this.address && typeof this.address.lng === 'number' && typeof this.address.lat === 'number') {
+    this.location = {
+      type: "Point",
+      coordinates: [this.address.lng, this.address.lat], // GeoJSON 标准: [经度, 纬度]
+    };
+  }
+  next();
+});
 
 const Order = mongoose.model("Order", OrderSchema);
 export default Order;

@@ -13,3 +13,17 @@ export async function getMerchants(req: Request, res: Response) {
     return res.status(500).json({ error: "获取商家列表失败" });
   }
 }
+export const updateDeliveryZone = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const { coordinates } = req.body; // Expecting [[[lng, lat], ...]]
+
+    await User.findByIdAndUpdate(userId, {
+      deliveryZone: { type: 'Polygon', coordinates }
+    });
+
+    res.json({ message: "配送范围已更新" });
+  } catch (error) {
+    res.status(500).json({ message: "更新失败" });
+  }
+};

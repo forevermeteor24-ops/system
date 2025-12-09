@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "polar-nano-terrorist-consisting.trycloudflare.com"
+      "scales-vitamins-montana-psychiatry.trycloudflare.com"
     ],
   },
 });

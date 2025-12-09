@@ -112,39 +112,40 @@ export async function createOrder(req: Request, res: Response) {
 }
 
 
-/** 获取订单列表（支持排序 + 状态筛选） */
+/** 获取订单列表（支持排序 + 状态筛选 + 地理围栏筛选） */
 export async function getOrders(req: Request, res: Response) {
   try {
-    // 强制断言 req.user 存在，或者使用你自定义的类型
     const actor = (req as any).user;
     if (!actor) return res.status(401).json({ error: "未登录" });
 
-    // 1. 初始化过滤条件（保留原有的权限控制）
+    // 1. 初始化过滤条件
     const filter: any = {};
     if (actor.role === "merchant") filter.merchantId = actor.userId;
     else if (actor.role === "user") filter.userId = actor.userId;
 
-    // 状态筛选功能
+    // 状态筛选
     const statusParam = req.query.status as string;
     if (statusParam) {
       filter.status = statusParam;
     }
 
     /** -----------------------
-     *  ⭐ 新增：配送范围筛选 (Region Filter)
-     *  接收前端参数：region = 'inside' | 'outside'
+     *  ⭐ 修改：配送范围筛选 (修复了没圈时显示全部的Bug)
      ------------------------ */
-    const regionParam = req.query.region as string; 
+    const regionParam = req.query.region as string; // 'inside' | 'outside'
     
-    // 只有商家且传递了筛选参数时才执行
+    // 仅处理商家的区域筛选请求
     if (actor.role === "merchant" && (regionParam === "inside" || regionParam === "outside")) {
-      // 查出商家的配送范围配置
       const merchant = await User.findById(actor.userId);
       
-      // 只有当商家确实设置了 deliveryZone 时才生效
-      if (merchant && merchant.deliveryZone && merchant.deliveryZone.coordinates.length > 0) {
-        
-        // 定义“在范围内”的查询条件
+      // 判断商家是否设置了有效的配送范围
+      const hasZone = merchant && 
+                      merchant.deliveryZone && 
+                      merchant.deliveryZone.coordinates && 
+                      merchant.deliveryZone.coordinates.length > 0;
+
+      if (hasZone) {
+        // === 情况 A: 商家已设置范围 ===
         const geoQuery = {
           $geoWithin: {
             $geometry: merchant.deliveryZone
@@ -152,15 +153,19 @@ export async function getOrders(req: Request, res: Response) {
         };
 
         if (regionParam === "inside") {
-          // 筛选：只看范围内的
           filter.location = geoQuery;
         } else {
-          // 筛选：只看范围外的 (逻辑：位置存在 且 不在范围内)
-          filter.location = { 
-            $not: geoQuery,
-            $exists: true // 排除掉那些完全没有坐标的老订单
-          };
+          // outside: 排除掉在圈内的 (即圈外 + 无坐标的)
+          filter.location = { $not: geoQuery };
         }
+      } else {
+        // === 情况 B: 商家未设置范围 (关键修复) ===
+        if (regionParam === "inside") {
+          // 如果想看“范围内”，但根本没画圈 -> 结果必然为空
+          return res.json([]); 
+        } 
+        // if regionParam === "outside"
+        // 没画圈，理论上所有订单都算“范围外”，不做额外筛选，直接返回全部
       }
     }
     // -----------------------
@@ -179,21 +184,18 @@ export async function getOrders(req: Request, res: Response) {
     const list = await OrderModel.find(filter).sort(sortRule);
 
     /** -----------------------
-     *  ⭐ 原有逻辑保持不变：列表页被动结算 (自动修复僵尸订单)
-     *  遍历查出来的列表，如果发现有超时未完成的，自动修正
+     *  列表页被动结算 (自动修复僵尸订单)
      ------------------------ */
     const now = new Date();
     const updates: Promise<any>[] = [];
 
     for (const order of list) {
-      // 判断条件：状态是配送中 + 有ETA + 当前时间已超过ETA
       if (order.status === '配送中' && order.eta && now > new Date(order.eta)) {
-        order.status = '已送达'; // 修改内存中的状态，保证返回给前端的是最新的
-        updates.push(order.save()); // 将数据库写入操作放入队列
+        order.status = '已送达';
+        updates.push(order.save());
       }
     }
 
-    // 如果有需要更新的订单，并行写入数据库
     if (updates.length > 0) {
       await Promise.allSettled(updates); 
     }
@@ -204,7 +206,6 @@ export async function getOrders(req: Request, res: Response) {
     return res.status(500).json({ error: "获取订单列表失败" });
   }
 }
-
 
 
 export async function getOrder(req: Request, res: Response) {

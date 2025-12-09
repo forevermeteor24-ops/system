@@ -1,15 +1,14 @@
-import React, { useRef, useEffect } from "react";
-import { MapContainer, TileLayer, FeatureGroup } from "react-leaflet";
-import { EditControl } from "react-leaflet-draw";
+import React, { useEffect, useRef, useState } from "react";
+import { MapContainer, TileLayer, FeatureGroup, useMap, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
+import "leaflet-draw";
 
-// 引入我们之前写好的 API
-import { saveDeliveryZone } from "../api/profile";
+// 引入 API
+import { saveDeliveryZone, fetchProfile } from "../api/profile";
 
-// === 修复 Leaflet 图标丢失的已知问题 ===
-// 这一步必须有，否则地图上的点标记会显示不出来
+// === 修复 Leaflet 图标丢失问题 ===
 import icon from "leaflet/dist/images/marker-icon.png";
 import iconShadow from "leaflet/dist/images/marker-shadow.png";
 
@@ -20,7 +19,57 @@ let DefaultIcon = L.icon({
   iconAnchor: [12, 41],
 });
 L.Marker.prototype.options.icon = DefaultIcon;
-// ==========================================
+
+// === 辅助组件：用于动态移动地图视角 ===
+function ChangeView({ center }: { center: [number, number] }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center, 13); // 13 是缩放级别
+  }, [center, map]);
+  return null;
+}
+
+// === 自定义绘图控件 ===
+const DrawControl = ({ onCreated }: { onCreated: (layer: any) => void }) => {
+  const map = useMap();
+  const drawControlRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!map) return;
+
+    // @ts-ignore
+    const drawControl = new L.Control.Draw({
+      position: "topright",
+      draw: {
+        rectangle: false,
+        circle: false,
+        circlemarker: false,
+        marker: false,
+        polyline: false,
+        polygon: {
+          allowIntersection: false,
+          showArea: true,
+        },
+      },
+    });
+
+    map.addControl(drawControl);
+    drawControlRef.current = drawControl;
+
+    const handleCreated = (e: any) => {
+      onCreated(e.layer);
+    };
+
+    map.on(L.Draw.Event.CREATED, handleCreated);
+
+    return () => {
+      map.removeControl(drawControl);
+      map.off(L.Draw.Event.CREATED, handleCreated);
+    };
+  }, [map, onCreated]);
+
+  return null;
+};
 
 interface Props {
   isOpen: boolean;
@@ -29,37 +78,56 @@ interface Props {
 
 const ShippingZoneModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const featureGroupRef = useRef<any>(null);
+  // 默认中心 (成都)，如果获取不到商家地址则使用此地址
+  const [center, setCenter] = useState<[number, number]>([30.657, 104.066]);
+  const [loading, setLoading] = useState(true);
 
-  // 如果弹窗没打开，不渲染任何内容
+  // 打开弹窗时获取商家位置
+  useEffect(() => {
+    if (isOpen) {
+      setLoading(true);
+      fetchProfile().then((data) => {
+        // 注意：Mongo存储通常是 [lng, lat], Leaflet 需要 [lat, lng]
+        // 你的接口 address 结构是 { lng, lat }
+        if (data.address && data.address.lat && data.address.lng) {
+          console.log("定位到商家地址:", data.address);
+          setCenter([data.address.lat, data.address.lng]);
+        }
+        setLoading(false);
+      }).catch(err => {
+        console.error("获取位置失败", err);
+        setLoading(false);
+      });
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
+  const handleDrawCreated = (layer: any) => {
+    if (featureGroupRef.current) {
+      featureGroupRef.current.clearLayers();
+      featureGroupRef.current.addLayer(layer);
+    }
+  };
+
   const handleSave = async () => {
-    // 1. 获取绘图层
-    const layers = featureGroupRef.current?.getLayers();
+    if (!featureGroupRef.current) return;
+    const layers = featureGroupRef.current.getLayers();
     
-    if (!layers || layers.length === 0) {
+    if (layers.length === 0) {
       alert("请先在地图上绘制一个多边形区域！");
       return;
     }
 
-    // 2. 取最后一个绘制的图形（假设我们只允许一个配送范围）
-    // 如果允许画多个，这里需要遍历 layers
     const layer = layers[layers.length - 1];
-    
-    // 3. 转为 GeoJSON 格式
     const geoJSON = layer.toGeoJSON();
-    
-    // GeoJSON 的 coordinates 格式通常是 [经度, 纬度]
-    // 形状: [ [ [lng, lat], [lng, lat], ... ] ]
-    const coordinates = geoJSON.geometry.coordinates;
+    const coordinates = geoJSON.geometry.coordinates; // [[[lng, lat], ...]]
 
     try {
-      console.log("正在保存区域坐标:", coordinates);
       await saveDeliveryZone(coordinates);
       alert("配送范围已保存成功！");
       onClose();
     } catch (err: any) {
-      console.error(err);
       alert("保存失败: " + (err.message || "未知错误"));
     }
   };
@@ -73,37 +141,40 @@ const ShippingZoneModal: React.FC<Props> = ({ isOpen, onClose }) => {
         </div>
         
         <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
-          请使用右上角的多边形工具 <span style={{fontWeight:'bold'}}>⬠</span> 在地图上绘制您的配送区域。
+          以您的店铺（蓝色标记）为中心，使用右上角 <span style={{fontWeight:'bold'}}>⬠</span> 工具绘制区域。
         </p>
 
-        {/* 地图容器 */}
         <div style={styles.mapWrapper}>
           <MapContainer 
-            center={[30.657, 104.066]} // 默认中心点 (你可以改成你的城市中心，例如成都)
-            zoom={12} 
+            // 这里设置初始中心，后续由 ChangeView 控制移动
+            center={center} 
+            zoom={13} 
             style={{ height: "100%", width: "100%" }}
           >
-            {/* 地图底图 (OpenStreetMap) */}
+            <ChangeView center={center} />
+
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              attribution='&copy; OpenStreetMap'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             
-            {/* 绘图控件组 */}
-            <FeatureGroup ref={featureGroupRef}>
-              <EditControl
-                position="topright"
-                draw={{
-                  rectangle: false, // 禁用矩形
-                  circle: false,    // 禁用圆形 (MongoDB GeoJSON 主要是多边形支持最好)
-                  circlemarker: false,
-                  marker: false,    // 禁用点标记
-                  polyline: false,  // 禁用线条
-                  polygon: true,    // ✅ 只开启多边形绘制
-                }}
-              />
-            </FeatureGroup>
+            {/* 显示商家位置的标记 */}
+            <Marker position={center}>
+              <Popup>
+                <b>您的店铺位置</b><br />
+                以此为中心规划配送
+              </Popup>
+            </Marker>
+
+            <FeatureGroup ref={featureGroupRef} />
+            <DrawControl onCreated={handleDrawCreated} />
           </MapContainer>
+          
+          {loading && (
+            <div style={styles.loader}>
+              📍 正在定位店铺位置...
+            </div>
+          )}
         </div>
 
         <div style={styles.footer}>
@@ -115,70 +186,30 @@ const ShippingZoneModal: React.FC<Props> = ({ isOpen, onClose }) => {
   );
 };
 
-// 简单的内联样式
+// 样式
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
-    position: "fixed",
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 1000,
-    backdropFilter: 'blur(3px)'
+    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center",
+    zIndex: 1000, backdropFilter: 'blur(3px)'
   },
   content: {
-    backgroundColor: "#fff",
-    borderRadius: "8px",
-    width: "800px",
-    maxWidth: "95%",
-    height: "600px",
-    display: "flex",
-    flexDirection: "column",
-    padding: "20px",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
+    backgroundColor: "#fff", borderRadius: "8px", width: "800px", maxWidth: "95%", height: "600px",
+    display: "flex", flexDirection: "column", padding: "20px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
   },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '10px'
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
+  closeBtn: { background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#999' },
+  mapWrapper: { 
+    flex: 1, border: "1px solid #ddd", borderRadius: "4px", overflow: "hidden", 
+    marginBottom: "15px", position: "relative" 
   },
-  closeBtn: {
-    background: 'none',
-    border: 'none',
-    fontSize: '24px',
-    cursor: 'pointer',
-    color: '#999'
-  },
-  mapWrapper: {
-    flex: 1,
-    border: "1px solid #ddd",
-    borderRadius: "4px",
-    overflow: "hidden",
-    marginBottom: "15px",
-    position: "relative" // 确保 Leaflet 控件定位正确
-  },
-  footer: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: "10px"
-  },
-  btnCancel: {
-    padding: "8px 16px",
-    background: "white",
-    border: "1px solid #ccc",
-    borderRadius: "4px",
-    cursor: "pointer"
-  },
-  btnSave: {
-    padding: "8px 16px",
-    background: "#1890ff",
-    color: "white",
-    border: "none",
-    borderRadius: "4px",
-    cursor: "pointer",
-    fontWeight: "bold"
+  footer: { display: "flex", justifyContent: "flex-end", gap: "10px" },
+  btnCancel: { padding: "8px 16px", background: "white", border: "1px solid #ccc", borderRadius: "4px", cursor: "pointer" },
+  btnSave: { padding: "8px 16px", background: "#1890ff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold" },
+  loader: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    background: 'rgba(255,255,255,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center',
+    zIndex: 1000, color: '#333', fontWeight: 'bold'
   }
 };
 

@@ -1,29 +1,40 @@
 import React, { useEffect, useState, useRef } from "react";
 import * as echarts from "echarts";
 
-// 引入高德地图扩展
-import "echarts-extension-amap"; 
-// 引入高德加载器
+// 1. 引入高德扩展
+import "echarts-extension-amap";
 import AMapLoader from "@amap/amap-jsapi-loader";
 
-// ----------- 类型定义 (保持不变) -----------
-type HeatPoint = [number, number, number]; 
+// ----------- 🛡️ 安全密钥 (防止重复执行) -----------
+if (!(window as any)._AMapSecurityConfig) {
+  (window as any)._AMapSecurityConfig = {
+    securityJsCode: "77a072080cb11c735ea19b7c59ad9781", // 你的安全密钥
+  };
+}
+
+const AMAP_KEY = "3b8390692d5bf40f7a9b065a4e77b7a4"; // 你的 Key
+
+// ----------- 类型定义 -----------
+type Point = [number, number, number];
 type DeliveryStats = { avgDeliveryTime: number; count: number };
 type AbnormalOrder = { _id: string; title: string; eta: number };
 
 const BASE = "https://system-backend.zeabur.app";
 
-// 🔴 请替换为你截图里的 Key
-const AMAP_KEY = "3b8390692d5bf40f7a9b065a4e77b7a4"; // JS-API-Key
-const AMAP_SECURITY_CODE = "77a072080cb11c735ea19b7c59ad9781"; // 安全密钥
+// 📍 静态演示数据
+const MOCK_POINTS: Point[] = [
+  [116.40, 39.90, 50], // 北京
+  [121.47, 31.23, 40], // 上海
+  [113.26, 23.12, 30], // 广州
+  [104.06, 30.67, 20], // 成都
+  [102.71, 25.04, 20], // 昆明
+];
 
 export default function Dashboard() {
-  const [heatmapData, setHeatmapData] = useState<HeatPoint[]>([]);
+  const [mapData, setMapData] = useState<Point[]>([]);
   const [deliveryStats, setDeliveryStats] = useState<DeliveryStats>({ avgDeliveryTime: 0, count: 0 });
   const [abnormalOrders, setAbnormalOrders] = useState<AbnormalOrder[]>([]);
   const [fixedCount, setFixedCount] = useState(0);
-
-  // 状态：地图 API 是否加载完成
   const [mapReady, setMapReady] = useState(false);
 
   const mapChartRef = useRef<HTMLDivElement>(null);
@@ -34,33 +45,40 @@ export default function Dashboard() {
   const gaugeInstance = useRef<echarts.ECharts | null>(null);
   const pieInstance = useRef<echarts.ECharts | null>(null);
 
-  // 1. 初始化高德地图脚本
+  // 1. 加载高德地图 API (带防重复检测)
   useEffect(() => {
-    // 设置安全密钥 (必须在加载 API 之前)
-    (window as any)._AMapSecurityConfig = {
-      securityJsCode: AMAP_SECURITY_CODE,
-    };
+    if ((window as any).AMap) {
+      setMapReady(true);
+      return;
+    }
+    const existingScript = document.querySelector('script[src*="webapi.amap.com/maps"]');
+    if (existingScript) {
+        const checkInterval = setInterval(() => {
+            if ((window as any).AMap) {
+                clearInterval(checkInterval);
+                setMapReady(true);
+            }
+        }, 500);
+        return;
+    }
 
     AMapLoader.load({
-      key: AMAP_KEY, 
+      key: AMAP_KEY,
       version: "2.0",
-      plugins: ["AMap.Scale", "AMap.ToolBar"], // 需要用到的插件
+      plugins: ["AMap.Scale", "AMap.ToolBar"],
     })
-      .then((AMap) => {
-        console.log("高德地图加载成功");
-        setMapReady(true);
-      })
-      .catch((e) => {
-        console.error("高德地图加载失败", e);
-      });
+      .then(() => setMapReady(true))
+      .catch((e) => console.error("地图加载失败", e));
+
+    return () => { mapInstance.current?.dispose(); };
   }, []);
 
-  // 2. 请求数据 (保持不变)
+  // 2. 请求数据
   useEffect(() => {
     async function loadData() {
       try {
         const token = localStorage.getItem("token");
-        const headers = { "Authorization": token ? `Bearer ${token}` : "", "Content-Type": "application/json" };
+        const headers = { Authorization: token ? `Bearer ${token}` : "", "Content-Type": "application/json" };
 
         const [heatRes, statRes, abnRes] = await Promise.all([
           fetch(`${BASE}/api/dashboard/heatmap`, { headers }),
@@ -70,10 +88,18 @@ export default function Dashboard() {
 
         if (heatRes.ok) {
           const data = await heatRes.json();
-          setHeatmapData(data.points || []);
+          const rawPoints = data.points || [];
+          if (rawPoints.length === 0) {
+            setMapData(MOCK_POINTS);
+          } else {
+            const points = rawPoints.map((p: any) => [p[1], p[0], p[2]]);
+            setMapData(points);
+          }
+        } else {
+          setMapData(MOCK_POINTS);
         }
 
-        let currentStats: DeliveryStats = { avgDeliveryTime: 0, count: 0 };
+        let currentStats = { avgDeliveryTime: 0, count: 0 };
         if (statRes.ok) {
           currentStats = await statRes.json();
           setDeliveryStats(currentStats);
@@ -83,7 +109,6 @@ export default function Dashboard() {
           const data = await abnRes.json();
           const zombies = data.abnormal || [];
           setAbnormalOrders(zombies);
-
           if (zombies.length > 0) {
             setFixedCount(zombies.length);
             setDeliveryStats({ ...currentStats, count: currentStats.count + zombies.length });
@@ -96,138 +121,117 @@ export default function Dashboard() {
             });
           }
         }
-      } catch (err) { console.error(err); }
+      } catch (err) {
+        setMapData(MOCK_POINTS);
+      }
     }
     loadData();
   }, []);
 
-  // 3. 渲染地图 (改为使用 amap 组件)
+  // 3. 渲染地图
   useEffect(() => {
     if (!mapReady || !mapChartRef.current) return;
 
-    if (!mapInstance.current) {
-      mapInstance.current = echarts.init(mapChartRef.current);
+    if (mapInstance.current) {
+        mapInstance.current.dispose();
     }
-
-    // 格式化数据：[lng, lat, value]
-    const formattedPoints = heatmapData.map((p) => [p[1], p[0], p[2]]);
+    mapInstance.current = echarts.init(mapChartRef.current);
 
     const option: any = {
-      tooltip: {
-        trigger: "item"
-      },
-      // amap 配置是插件特有的，标准类型里没有，所以必须用 any
+      tooltip: { trigger: "item" },
       amap: {
-        center: [104.114129, 37.550339],
+        center: [105.0, 36.0],
         zoom: 4,
         resizeEnable: true,
-        mapStyle: "amap://styles/whitesmoke",
+        mapStyle: "amap://styles/normal",
         renderOnMoving: true,
-        echartsLayerZIndex: 2000,
+        // 🛠️ 修复警告: 替换 echartsLayerZIndex 为 echartsLayerInteractive
+        echartsLayerInteractive: true, 
       },
+      // 🛠️ 核心修复: Heatmap 必须有 visualMap 才能工作！
+      // 即使 show: false 也要写，否则报错
       visualMap: {
+        show: false, // 隐藏左下角的色条，保持界面清爽
         min: 0,
-        max: 50,
-        calculable: true,
-        inRange: { color: ["#50a3ba", "#eac736", "#d94e5d"] },
-        bottom: 30,
-        left: 20,
+        max: 60,
+        inRange: {
+          // 定义热力图的渐变色
+          color: ["#79ccff", "#fffb00", "#ff3333"]
+        }
       },
       series: [
+        // 1. 呼吸点 (最醒目)
         {
-          type: "heatmap",
-          // 🟢 因为 option 是 any，这里写 "amap" 就不会报错了
+          name: "实时订单",
+          type: "effectScatter",
           coordinateSystem: "amap",
-          data: formattedPoints,
-          pointSize: 10,
-          blurSize: 15,
-          itemStyle: { opacity: 0.8 }
+          data: mapData,
+          symbolSize: 20,
+          showEffectOn: "render",
+          rippleEffect: { brushType: "stroke", scale: 4 },
+          itemStyle: { color: "#ef4444", shadowBlur: 10, shadowColor: "#333" },
+          zlevel: 1,
+        },
+        // 2. 热力图 (背景氛围)
+        {
+            name: "热力图",
+            type: "heatmap",
+            coordinateSystem: "amap",
+            data: mapData,
+            pointSize: 40,
+            blurSize: 40,
+            itemStyle: { opacity: 0.6 }
         }
       ],
     };
 
     mapInstance.current.setOption(option);
 
-    // 获取高德地图实例，如果你想原生操作地图（比如添加路况图层）
-    // const amapComponent = mapInstance.current.getModel().getComponent('amap');
-    // const amap = amapComponent.getAMap(); 
-
     const handleResize = () => mapInstance.current?.resize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [mapReady, heatmapData]);
+  }, [mapReady, mapData]);
 
-  // 4. 仪表盘 (保持逻辑，略微调整样式适配)
+  // 4. 其他图表
   useEffect(() => {
-    if (!gaugeChartRef.current) return;
-    if (!gaugeInstance.current) gaugeInstance.current = echarts.init(gaugeChartRef.current);
-
+    if (gaugeChartRef.current && !gaugeInstance.current) gaugeInstance.current = echarts.init(gaugeChartRef.current);
     const avgMins = Math.round(deliveryStats.avgDeliveryTime / 60000);
-    const option: echarts.EChartsOption = {
+    gaugeInstance.current?.setOption({
       series: [{
-        type: "gauge",
-        min: 0, max: 60,
-        axisLine: { lineStyle: { width: 15, color: [[0.3, "#10B981"], [0.7, "#3B82F6"], [1, "#EF4444"]] } },
-        pointer: { width: 5 },
-        detail: { formatter: "{value}分", fontSize: 20, offsetCenter: [0, "70%"] },
-        data: [{ value: avgMins, name: "平均配送时效" }]
+        type: "gauge", max: avgMins > 60 ? 1440 : 60,
+        axisLine: { lineStyle: { width: 10, color: [[0.3, "#10B981"], [0.7, "#3B82F6"], [1, "#EF4444"]] } },
+        detail: { formatter: "{value}分", fontSize: 16 }, data: [{ value: avgMins, name: "时效" }]
       }]
-    };
-    gaugeInstance.current.setOption(option);
-  }, [deliveryStats]);
+    });
 
-  // 5. 饼图 (保持逻辑)
-  useEffect(() => {
-    if (!pieChartRef.current) return;
-    if (!pieInstance.current) pieInstance.current = echarts.init(pieChartRef.current);
+    if (pieChartRef.current && !pieInstance.current) pieInstance.current = echarts.init(pieChartRef.current);
     const total = deliveryStats.count;
-    const normal = total > fixedCount ? total - fixedCount : 0;
-    
-    const option: echarts.EChartsOption = {
-       tooltip: { trigger: 'item' },
-       legend: { bottom: 0 },
-       color: ['#10B981', '#F59E0B', '#EF4444'],
-       series: [{
-         type: 'pie',
-         radius: ['40%', '70%'],
-         avoidLabelOverlap: false,
-         label: { show: false },
-         emphasis: { label: { show: true, fontSize: '18', fontWeight: 'bold' } },
-         data: total === 0 ? [{value:0, name:'暂无'}] : [
-           { value: normal, name: '正常' },
-           { value: fixedCount, name: '已修复' },
-           { value: abnormalOrders.length, name: '异常' }
-         ]
-       }]
-    };
-    pieInstance.current.setOption(option);
+    pieInstance.current?.setOption({
+      series: [{
+        type: "pie", radius: ['50%', '70%'], label: { show: false },
+        data: total === 0 ? [{value:0, name:'暂无'}] : [
+          { value: total > fixedCount ? total - fixedCount : 0, name: '正常', itemStyle: {color: '#10B981'} },
+          { value: fixedCount, name: '已修复', itemStyle: {color: '#F59E0B'} },
+          { value: abnormalOrders.length, name: '异常', itemStyle: {color: '#EF4444'} }
+        ]
+      }]
+    });
   }, [deliveryStats, fixedCount, abnormalOrders]);
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>🚚 实时物流监控驾驶舱 (高德版)</h1>
+        <h1 style={styles.title}>🚚 物流实时大屏</h1>
+        <div style={styles.badge}>🟢 系统正常</div>
       </header>
-
       <div style={styles.grid}>
-        {/* 左侧：地图区域，移除 padding 让他看起来像个大屏 */}
-        <div style={{ ...styles.mainCard, padding: 0, position: 'relative' }}>
-          <div ref={mapChartRef} style={{ width: "100%", height: "100%", minHeight: "500px", borderRadius: "16px" }}></div>
-          {/* 添加一个悬浮标题 */}
-          <div style={styles.mapTitleOverlay}>📍 实时热力分布</div>
+        <div style={{ ...styles.card, padding: 0, position: 'relative' }}>
+          <div ref={mapChartRef} style={{ width: "100%", height: "600px", borderRadius: "16px" }}></div>
+          <div style={styles.overlay}>📍 实时分布</div>
         </div>
-
-        {/* 右侧数据列 */}
-        <div style={styles.sideColumn}>
-          <div style={styles.statCard}>
-            <h3 style={styles.cardTitle}>⏱️ 配送时效</h3>
-            <div ref={gaugeChartRef} style={{ width: "100%", height: "200px" }}></div>
-          </div>
-          <div style={styles.statCard}>
-             <h3 style={styles.cardTitle}>🛡️ 订单健康度</h3>
-            <div ref={pieChartRef} style={{ width: "100%", height: "200px" }}></div>
-            {fixedCount > 0 && <div style={styles.alertBox}>⚡ 已自动修复 {fixedCount} 单异常</div>}
-          </div>
+        <div style={styles.column}>
+          <div style={styles.card}><h3>⏱️ 平均时效</h3><div ref={gaugeChartRef} style={{ height: "200px" }}></div></div>
+          <div style={styles.card}><h3>🛡️ 订单健康</h3><div ref={pieChartRef} style={{ height: "200px" }}></div></div>
         </div>
       </div>
     </div>
@@ -235,14 +239,12 @@ export default function Dashboard() {
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  container: { minHeight: "100vh", backgroundColor: "#f3f4f6", padding: "20px" },
-  header: { marginBottom: "20px", padding: "15px", backgroundColor: "#fff", borderRadius: "12px", boxShadow: "0 2px 5px rgba(0,0,0,0.05)" },
-  title: { margin: 0, fontSize: "22px", color: "#1f2937" },
-  grid: { display: "grid", gridTemplateColumns: "7fr 3fr", gap: "20px", height: "calc(100vh - 110px)" },
-  mainCard: { backgroundColor: "#fff", borderRadius: "16px", boxShadow: "0 4px 6px rgba(0,0,0,0.1)", overflow: "hidden" },
-  sideColumn: { display: "flex", flexDirection: "column", gap: "20px" },
-  statCard: { flex: 1, backgroundColor: "#fff", borderRadius: "16px", padding: "15px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
-  cardTitle: { margin: "0 0 10px 0", fontSize: "16px", color: "#6b7280" },
-  alertBox: { marginTop: "10px", padding: "5px 10px", backgroundColor: "#ecfdf5", color: "#047857", borderRadius: "6px", fontSize: "12px" },
-  mapTitleOverlay: { position: "absolute", top: "20px", left: "20px", backgroundColor: "rgba(255,255,255,0.9)", padding: "8px 16px", borderRadius: "8px", fontWeight: "bold", zIndex: 999, boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }
+  container: { minHeight: "100vh", backgroundColor: "#f0f2f5", padding: "20px" },
+  header: { display: "flex", justifyContent: "space-between", marginBottom: "20px", background: "#fff", padding: "15px", borderRadius: "10px" },
+  title: { margin: 0, fontSize: "20px" },
+  badge: { background: "#d1fae5", color: "#065f46", padding: "5px 10px", borderRadius: "20px", fontSize: "12px" },
+  grid: { display: "grid", gridTemplateColumns: "7fr 3fr", gap: "20px" },
+  card: { background: "#fff", borderRadius: "16px", padding: "15px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", overflow: "hidden" },
+  column: { display: "flex", flexDirection: "column", gap: "20px" },
+  overlay: { position: "absolute", top: "20px", left: "20px", background: "rgba(255,255,255,0.9)", padding: "8px 15px", borderRadius: "8px", fontWeight: "bold", zIndex: 100 },
 };

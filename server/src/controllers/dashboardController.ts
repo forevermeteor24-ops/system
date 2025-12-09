@@ -36,86 +36,99 @@ export async function getOrderHeatmap(req: Request, res: Response) {
   }
 }
 
-// 2. 获取配送时效（平均配送时长）
+// ... imports ...
+
 export async function getDeliveryTimeStats(req: Request, res: Response) {
   try {
     const merchantId = getMerchantId(req);
     if (!merchantId) return res.status(401).json({ error: "无法获取用户信息" });
 
-    // ================== 🟢 新增：数据清洗逻辑 ==================
-    // 目的：修复那些被强制改为“已送达”但缺少送达时间的僵尸订单
-    // 查找条件：当前商家的单 + 状态已送达 + (deliveredAt 不存在 或 为 null)
+    // 1. 数据清洗 (逻辑不变)
     const corruptedOrders = await Order.find({
       merchantId: merchantId,
       status: "已送达",
-      $or: [
-        { deliveredAt: { $exists: false } },
-        { deliveredAt: null }
-      ]
+      $or: [{ deliveredAt: { $exists: false } }, { deliveredAt: null }]
     });
 
     if (corruptedOrders.length > 0) {
-      console.log(`[Dashboard] 正在修复 ${corruptedOrders.length} 个缺失时间的已送达订单...`);
-      
       const updates = corruptedOrders.map(order => {
-        // 补全策略：如果没有送达时间，默认为“创建时间 + 30分钟”
-        // 这样既补全了数据，又不会让平均时效数据变得离谱
         const fixTime = new Date(order.createdAt);
-        fixTime.setMinutes(fixTime.getMinutes() + 30); 
-        
+        fixTime.setHours(fixTime.getHours() + 24); // 🟢 默认修复为 24小时后送达
         order.deliveredAt = fixTime.getTime();
         return order.save();
       });
-      
-      // 等待修复完成
       await Promise.all(updates);
     }
-    // =========================================================
 
-    // ✅ 原有逻辑（现在能查到刚才修复的订单了）
+    // 2. 查询数据 (查 eta)
     const orders = await Order.find({
       merchantId: merchantId, 
       status: "已送达",
       deliveredAt: { $ne: null }
-    }).select("createdAt deliveredAt");
+    }).select("createdAt deliveredAt eta");
 
-    const durations = orders.map(o => {
-        if (o.deliveredAt && o.createdAt) {
-            return new Date(o.deliveredAt).getTime() - new Date(o.createdAt).getTime();
-        }
-        return 0;
-    }).filter(d => d > 0); 
+    // 3. 统计逻辑
+    let totalDuration = 0;
+    
+    // 🟢 修改区间定义：[0-12h, 12-24h, 24-48h, 48h+]
+    const distribution = [0, 0, 0, 0]; 
+    
+    let onTimeCount = 0;
+    let lateCount = 0;
 
-    const avg = durations.length
-      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-      : 0;
+    const validOrders = orders.filter(o => o.createdAt && o.deliveredAt);
+
+    validOrders.forEach(o => {
+      const deliveredTime = new Date(o.deliveredAt).getTime();
+      const createdTime = new Date(o.createdAt).getTime();
+
+      // --- A. 计算柱状图分布 (按小时) ---
+      const duration = deliveredTime - createdTime;
+      totalDuration += duration;
+      
+      const hours = duration / (1000 * 60 * 60); // 🟢 转换为小时
+
+      if (hours <= 12) distribution[0]++;      // 极速
+      else if (hours <= 24) distribution[1]++; // 正常 (1天内)
+      else if (hours <= 48) distribution[2]++; // 稍慢 (2天内)
+      else distribution[3]++;                  // 慢 (2天以上)
+
+      // --- B. 健康度 (超时逻辑不变，依然基于 ETA) ---
+      if (o.eta && deliveredTime > new Date(o.eta).getTime()) {
+        lateCount++; 
+      } else {
+        onTimeCount++;
+      }
+    });
+
+    const avg = validOrders.length ? Math.round(totalDuration / validOrders.length) : 0;
 
     res.json({
-      avgDeliveryTime: avg, // 毫秒
-      count: durations.length
+      avgDeliveryTime: avg, // 依然返回毫秒，前端自己转单位
+      count: validOrders.length,
+      distribution: distribution,
+      health: {
+        onTime: onTimeCount,
+        late: lateCount
+      }
     });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "配送时效统计失败" });
+    res.status(500).json({ error: "统计失败" });
   }
 }
-
-// 3. 获取异常订单（超过 ETA 未送达）
+// getAbnormalOrders 保持不变，它负责提供饼图里的“红色异常”部分
 export async function getAbnormalOrders(req: Request, res: Response) {
   try {
     const merchantId = getMerchantId(req);
     if (!merchantId) return res.status(401).json({ error: "无法获取用户信息" });
-
     const now = Date.now();
-
-    // 这里的逻辑不用动，因为上面的修复逻辑跑完后，
-    // 僵尸订单状态变成了“已送达”，自然就不会出现在这里了
     const abnormal = await Order.find({
       merchantId: merchantId,
       status: "配送中",
       eta: { $ne: null, $lt: now }
     }).select("title eta merchantId userId createdAt");
-
     res.json({ abnormal });
   } catch (err) {
     console.error(err);

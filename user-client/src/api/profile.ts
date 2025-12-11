@@ -1,5 +1,5 @@
 // profile.ts
-import type { Address } from "./orders";
+import type { Address } from "../types/order";
 
 export interface Profile {
   _id: string;

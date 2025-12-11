@@ -1,3 +1,4 @@
+
 export interface Address {
   detail: string;
   lng: number | null;
@@ -8,6 +9,7 @@ export interface UserInfo {
   _id: string;
   username: string;
   address: Address;
+  phone?:Address;
 }
 
 export type OrderStatus =
@@ -32,7 +34,7 @@ export interface Order {
   totalPrice: number;     
   eta: number;            // ETA 时间戳 (ms)
   address: Address;
-  merchantId: string;
+  merchantId: string | UserInfo;
   userId: string;
   status: OrderStatus;
   createdAt: string;
@@ -40,6 +42,11 @@ export interface Order {
 
   /** 后端推送过来的路线点数组 */
   routePoints?: RoutePoint[];
+  trackState?: {
+    index: number;
+    total: number;
+    lastPosition?: RoutePoint; // 复用你的 RoutePoint 类型
+  };
 
   /** 送达时间（如果已送达） */
   deliveredAt?: string;

@@ -18,7 +18,7 @@ export default defineConfig({
 
     // ⭐⭐ 允许 ngrok 访问
     allowedHosts: [
-      "employer-wesley-wishlist-quantum.trycloudflare.com"
+      "user-client.zeabur.app"
     ],
   },
 });

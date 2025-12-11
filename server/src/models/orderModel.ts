@@ -23,7 +23,7 @@ const TrackPointSchema = new mongoose.Schema(
   {
     lng: Number,
     lat: Number,
-    timestamp: { type: Number }, // 可选：记录点生成时间
+    timestamp: { type: Number }, 
   },
   { _id: false }
 );
